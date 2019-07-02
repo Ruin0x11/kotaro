@@ -40,19 +40,19 @@ function NodeTypes.generic_for_generators(generators)
 end
 
 function NodeTypes.for_block(l_for, for_range, l_do, block, l_end)
-   return Node("if_block", {l_for, for_range, l_do, block, l_end})
+   return Node("for_block", {l_for, for_range, l_do, block, l_end})
 end
 
 function NodeTypes.repeat_statement(l_repeat, block, l_until, cond)
    return Node("repeat_statement", {l_repeat, block, l_until, cond})
 end
 
-function NodeTypes.function_block(name, block)
-   return Node("function_block", {name, block})
+function NodeTypes.function_block(l_function, name, block, l_end)
+   return Node("function_block", {l_function, name, block, l_end})
 end
 
-function NodeTypes.local_function_declaration(l_local, l_function, block)
-   return Node("local_function_declaration", {l_local, l_function, block})
+function NodeTypes.local_function_declaration(l_local, block)
+   return Node("local_function_declaration", {l_local, block})
 end
 
 function NodeTypes.local_assignment(l_local, assign)
@@ -167,8 +167,12 @@ function NodeTypes.function_parameters_and_body(params, body)
    return Node("function_parameters_and_body", {params, body})
 end
 
-function NodeTypes.function_parameters(params)
-   return Node("function_parameters", params)
+function NodeTypes.function_parameters(l_lparen, arglist, l_rparen)
+   return Node("function_parameters", {l_lparen, arglist, l_rparen})
+end
+
+function NodeTypes.function_expression(l_function, body, l_end)
+   return Node("function_parameters", {l_function, body, l_end})
 end
 
 -- Takes tokenized source and converts it to a Concrete Syntax Tree
@@ -222,7 +226,7 @@ function cst_parser:parse_function_args_and_body()
    end
 
    local args = {}
-   local l_rparen
+   local l_rparen = self.lexer:consumeSymbol(")")
 
    while not l_rparen do
       if self.lexer:tokenIs("Ident") then
@@ -235,7 +239,7 @@ function cst_parser:parse_function_args_and_body()
             end
          end
       else
-         local l_varargs = self.lexer:consume_symbol("...")
+         local l_varargs = self.lexer:consumeSymbol("...")
          if l_varargs then
             args[#args+1] = l_varargs
             l_rparen = self.lexer:consumeSymbol(")")
@@ -251,12 +255,8 @@ function cst_parser:parse_function_args_and_body()
    local st, body = self:parse_block()
    if not st then return st, body end
 
-   local l_end = self.lexer:consumeKeyword("end")
-   if not l_end then
-      return false, self:generate_error("`end` expected")
-   end
-
-   local func_params = NodeTypes.function_parameters(l_lparen, args, l_rparen)
+   local arglist = NodeTypes.arglist(args)
+   local func_params = NodeTypes.function_parameters(l_lparen, arglist, l_rparen)
 
    -- TODO: funcdef --> (def -> name -> parameters -> suite)
    return true, NodeTypes.function_parameters_and_body(func_params, body)
@@ -469,6 +469,22 @@ function cst_parser:parse_constructor_expression()
    return true, NodeTypes.constructor_expression(l_lbracket, body, l_rbracket)
 end
 
+function cst_parser:parse_function_expression()
+   local l_function = self.lexer:consumeKeyword("function")
+   assert(l_function)
+
+   local st, body = self:parse_function_args_and_body()
+   if not st then return st, body end
+
+
+   local l_end = self.lexer:consumeKeyword("end")
+   if not l_end then
+      return false, self:generate_error("`end` expected")
+   end
+
+   return true, NodeTypes.function_expression(l_function, body, l_end)
+end
+
 function cst_parser:parse_simple_expression()
    if self.lexer:tokenIs("Number") then
       return true, Leaf("number", self.lexer:consumeToken())
@@ -567,7 +583,6 @@ function cst_parser:parse_if_block()
 
       nodes[#nodes+1] = l_then
 
-      print("Parseblock", require"inspect"(self.lexer:peekToken()))
       local st, body = self:parse_block()
       if not st then return false, body end
 
@@ -702,7 +717,7 @@ function cst_parser:parse_generic_for_range(var_name)
    local vars_node = NodeTypes.generic_for_variables(vars)
    local generators_node = NodeTypes.generic_for_generators(generators)
 
-   return NodeTypes.generic_for_range(vars_node, l_in, generators_node)
+   return true, NodeTypes.generic_for_range(vars_node, l_in, generators_node)
 end
 
 function cst_parser:parse_for_block()
@@ -715,12 +730,14 @@ function cst_parser:parse_for_block()
 
    local var_name = self.lexer:consumeToken()
 
-   local for_range
+   local st, for_range
    if self.lexer:tokenIsSymbol("=") then
-      for_range = self:parse_numeric_for_range(var_name)
+      st, for_range = self:parse_numeric_for_range(var_name)
    else
-      for_range = self:parse_generic_for_range(var_name)
+      st, for_range = self:parse_generic_for_range(var_name)
    end
+
+   if not st then return st, for_range end
 
    local l_do = self.lexer:consumeKeyword("do")
    if not l_do then
@@ -757,6 +774,9 @@ function cst_parser:parse_repeat_block()
 end
 
 function cst_parser:parse_function_block()
+   local l_function = self.lexer:consumeKeyword("function")
+   assert(l_function)
+
    if not self.lexer:tokenIs("Ident") then
       return false, self:generate_error("Function name expected")
    end
@@ -767,7 +787,12 @@ function cst_parser:parse_function_block()
    local st, func = self:parse_function_args_and_body()
    if not st then return false, func end
 
-   return true, NodeTypes.function_block(name, func)
+   local l_end = self.lexer:consumeKeyword("end")
+   if not l_end then
+      return false, self:generate_error("`end` expected")
+   end
+
+   return true, NodeTypes.function_block(l_function, name, func, l_end)
 end
 
 --
@@ -789,10 +814,9 @@ function cst_parser:parse_local()
 
       return true, NodeTypes.local_assignment(l_local, assign)
    elseif self.lexer:tokenIsKeyword("function") then
-      local l_function = self.lexer:consumeKeyword("function")
       local st, func = self:parse_function_block()
       if not st then return st, func end
-      return true, NodeTypes.local_function_declaration(l_local, l_function, func)
+      return true, NodeTypes.local_function_declaration(l_local, func)
    end
 
    return false, self:generate_error("local var or function def expected")

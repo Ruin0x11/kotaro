@@ -119,7 +119,7 @@ function leaf:_init(_type, value, prefix, line, column)
 
    self.line = line or 0
    self.column = column or 0
-   self._prefix = prefix or ""
+   self._prefix = prefix or {}
 end
 
 function leaf:__eq(other)
@@ -127,7 +127,12 @@ function leaf:__eq(other)
 end
 
 function leaf:__tostring()
-   return self._prefix .. tostring(self.value)
+   local prefix = ""
+   for _, v in ipairs(self._prefix) do
+      prefix = prefix .. v.Data
+   end
+
+   return prefix .. tostring(self.value)
 end
 
 function leaf:clone()

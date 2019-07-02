@@ -355,11 +355,7 @@ function lexer:emit()
 end
 
 local function toLeaf(tok)
-   local prefix = ""
-   for _, v in ipairs(tok.LeadingWhite) do
-      prefix = prefix .. v.Data
-   end
-   return Leaf(tok.Type, tok.Data, prefix, tok.Line, tok.Char)
+   return Leaf(tok.Type, tok.Data, tok.LeadingWhite, tok.Line, tok.Char)
 end
 
 function lexer:consumeToken()
