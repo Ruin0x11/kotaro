@@ -11,6 +11,7 @@ local b = node("test", {leaf("asd", "dood"),leaf("zxc", "zxc")})
 
 local visitors = require("yalf.visitor.visitors")
 local print_visitor = visitors.print_visitor
+local visitor = visitors.visitor
 
 -- print_visitor():visit(a)
 
@@ -32,8 +33,6 @@ if not a then
    print(new)
 end
 
-print_visitor():visit(new)
-
 local f1 = io.open("/tmp/f1", "w")
 local f2 = io.open("/tmp/f2", "w")
 f1:write(sourceText)
@@ -44,3 +43,13 @@ f2:close()
 if new ~= sourceText then
    os.execute("diff /tmp/f1 /tmp/f2 --color=always")
 end
+
+local ex = require("yalf.visitor.refactoring").exchange_refactoring()
+
+local r = visitors.refactoring_visitor:new({ex})
+
+visitor.visit(r, new)
+
+print(tostring(new))
+
+-- visitor.visit(print_visitor:new(), new)
