@@ -83,12 +83,12 @@ function NodeTypes.call_statement(expr)
    return Node("call_statement", {expr})
 end
 
-function NodeTypes.lhs_list(lhs)
-   return Node("lhs_list", lhs)
+function NodeTypes.variable_list(lhs)
+   return Node("variable_list", lhs)
 end
 
-function NodeTypes.rhs_list(rhs)
-   return Node("rhs_list", rhs)
+function NodeTypes.value_list(rhs)
+   return Node("value_list", rhs)
 end
 
 function NodeTypes.assignment_statement(lhs, l_equals, rhs)
@@ -125,14 +125,6 @@ end
 
 function NodeTypes.constructor_expression(l_lbrace, body, l_rbrace)
    return Node("constructor_expression", {l_lbrace, body, l_rbrace})
-end
-
-function NodeTypes.variable_expression(expr)
-   return Node("variable_expression", {expr})
-end
-
-function NodeTypes.primary_expression(expr)
-   return Node("primary_expression", {expr})
 end
 
 function NodeTypes.member_expression(l_dot_or_colon, id)
@@ -232,7 +224,9 @@ function cst_parser:parse_function_args_and_body()
       if self.lexer:tokenIs("Ident") then
          args[#args+1] = self.lexer:consumeToken()
          local l_comma = self.lexer:consumeSymbol(",")
-         if not l_comma then
+         if l_comma then
+            args[#args+1] = l_comma
+         else
             l_rparen = self.lexer:consumeSymbol(")")
             if not l_rparen then
                return false, self:generate_error("`)` expected")
@@ -285,11 +279,10 @@ function cst_parser:parse_primary_expression()
    elseif self.lexer:tokenIs("Ident") then
       local id = self.lexer:consumeToken()
 
-      assert(id.type == "Ident")
-      expr = NodeTypes.variable_expression(id)
+      expr = id
    end
 
-   return true, NodeTypes.primary_expression(expr)
+   return true, expr
 end
 
 function cst_parser:parse_suffixed_expression(only_dots)
@@ -390,7 +383,7 @@ function cst_parser:parse_constructor_key()
 end
 
 function cst_parser:parse_value_or_key()
-   local lookahead = self.lexer:peekToken(1)
+   local lookahead = self.lexer:peekToken(2)
    if lookahead.type == "Symbol" and lookahead.value == "=" then
       local key = self.lexer:consumeToken()
 
@@ -548,7 +541,7 @@ function cst_parser:parse_expression()
 
       ops[#ops+1] = op
 
-      st, exp = self:parse_simple_expression()
+      st, exp = self:parse_expression()
       if not st then return st, exp end
 
       ops[#ops+1] = exp
@@ -849,17 +842,22 @@ function cst_parser:parse_return()
       local st, first_expr = self:parse_expression()
       if st then
          exprs[1] = first_expr
-         while self.lexer:consumeSymbol(",") do
+         local l_comma = self.lexer:consumeSymbol(",")
+         while l_comma do
+            exprs[#exprs+1] = l_comma
+
             local st, ex = self:parse_expression()
             if not st then return false, ex end
             exprs[#exprs+1] = ex
+
+            l_comma = self.lexer:consumeSymbol(",")
          end
       end
    end
 
-   local rhs_list = NodeTypes.rhs_list(exprs)
+   local value_list = NodeTypes.value_list(exprs)
 
-   return true, NodeTypes.return_statement(l_return, rhs_list)
+   return true, NodeTypes.return_statement(l_return, value_list)
 end
 
 function cst_parser:parse_break()
@@ -919,8 +917,8 @@ function cst_parser:parse_assignment(suffixed)
       rhs[#rhs+1] = rhs_part
    end
 
-   local lhs_node = NodeTypes.lhs_list(lhs)
-   local rhs_node = NodeTypes.rhs_list(rhs)
+   local lhs_node = NodeTypes.variable_list(lhs)
+   local rhs_node = NodeTypes.value_list(rhs)
 
    return true, NodeTypes.assignment_statement(lhs_node, l_equals, rhs_node)
 end

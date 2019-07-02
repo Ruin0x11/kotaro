@@ -31,12 +31,40 @@ function print_visitor:_init(stream)
    self.indent = 0
 end
 
+-- from inspect.lua
+
+local function smart_quote(str)
+  if str:match('"') and not str:match("'") then
+    return "'" .. str .. "'"
+  end
+  return '"' .. str:gsub('"', '\\"') .. '"'
+end
+
+local short_control_char_escapes = {
+  ["\a"] = "\\a",  ["\b"] = "\\b", ["\f"] = "\\f", ["\n"] = "\\n",
+  ["\r"] = "\\r",  ["\t"] = "\\t", ["\v"] = "\\v"
+}
+local long_control_char_escapes = {} -- \a => nil, \0 => \000, 31 => \031
+for i=0, 31 do
+  local ch = string.char(i)
+  if not short_control_char_escapes[ch] then
+    short_control_char_escapes[ch] = "\\"..i
+    long_control_char_escapes[ch]  = string.format("\\%03d", i)
+  end
+end
+
+local function escape(str)
+  return (str:gsub("\\", "\\\\")
+             :gsub("(%c)%f[0-9]", long_control_char_escapes)
+             :gsub("%c", short_control_char_escapes))
+end
+
 local function dump_node(node)
    if node:is_a(Leaf) then
-      return string.format("Leaf(%s) [line=%d, column=%d, prefix='%s']",
-                           node.type, node.line, node.column, node:get_prefix())
+      return string.format("%s(%s) [line=%d, column=%d, prefix='%s']",
+                           string.upper(node.type), smart_quote(tostring(node.value)), node.line, node.column, escape(node:prefix_to_string()))
    elseif node:is_a(Node) then
-      return string.format("Node(%s) [%d children]",
+      return string.format("%s [%d children]",
                            node.type, #node.children)
    else
       error("unknown node")

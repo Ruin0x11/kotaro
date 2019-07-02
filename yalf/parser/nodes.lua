@@ -126,13 +126,16 @@ function leaf:__eq(other)
    return self.type == other.type and self.value == other.value
 end
 
-function leaf:__tostring()
+function leaf:prefix_to_string()
    local prefix = ""
    for _, v in ipairs(self._prefix) do
       prefix = prefix .. v.Data
    end
+   return prefix
+end
 
-   return prefix .. tostring(self.value)
+function leaf:__tostring()
+   return self:prefix_to_string() .. tostring(self.value)
 end
 
 function leaf:clone()

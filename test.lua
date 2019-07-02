@@ -26,21 +26,13 @@ inf:close()
 local l = require("yalf.parser.lexer")(sourceText)
 local i = require("inspect")
 
-local s = ""
-while true do
-   local t = l:emit()
-   -- print(i(t))
-   if t.Type == "Eof" then
-      break
-   end
-   for _, v in ipairs(t.LeadingWhite) do
-      s = s .. v.Data
-   end
-   s = s .. t.Data
+local cst_parser = require("yalf.parser.cst_parser")
+local a, new = cst_parser(sourceText):parse()
+if not a then
+   print(new)
 end
-s = s .. "\n"
 
-local _, new = require("yalf.parser.cst_parser")(sourceText):parse()
+print_visitor():visit(new)
 
 local f1 = io.open("/tmp/f1", "w")
 local f2 = io.open("/tmp/f2", "w")
