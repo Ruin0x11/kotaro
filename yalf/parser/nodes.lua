@@ -1,38 +1,8 @@
 local class = require("thirdparty.pl.class")
 
-local base_node = {}
-
-function base_node:init_fields()
-   self.type = nil
-   self.parent = nil
-   self.children = {}
-end
-
-function base_node:__eq()
-   error("unimplemented")
-end
-
-function base_node:clone()
-   error("unimplemented")
-end
-
-function base_node:replace()
-   error("unimplemented")
-end
-
-function base_node:set_prefix(prefix)
-   error("unimplemented")
-end
-
-function base_node:get_prefix()
-   error("unimplemented")
-end
-
-local node = class(base_node)
+local node = class()
 
 function node:_init(_type, children, prefix)
-   self:init_fields()
-
    assert(_type)
    self.type = _type
    self.children = children or {}
@@ -44,6 +14,10 @@ function node:_init(_type, children, prefix)
    if prefix then
       self:set_prefix(prefix)
    end
+end
+
+function node:is_leaf()
+   return false
 end
 
 function node:set_prefix(prefix)
@@ -60,10 +34,10 @@ function node:get_prefix()
 end
 
 function node:__eq(other)
-   if not self.type == other.type then
+   if self.type ~= other.type then
       return false
    end
-   if not #self.children == #other.children then
+   if #self.children ~= #other.children then
       return false
    end
    for i=1,#self.children do
@@ -74,11 +48,18 @@ function node:__eq(other)
    return true
 end
 
-local leaf
 function node:__tostring()
    local code = ""
    for _, v in ipairs(self.children) do
       code = code .. tostring(v)
+   end
+   return code
+end
+
+function node:get_value()
+   local code = ""
+   for _, v in ipairs(self.children) do
+      code = code .. v:get_value()
    end
    return code
 end
@@ -107,19 +88,20 @@ function node:append_child(child)
    table.insert(self.children, child)
 end
 
-local leaf = class(base_node)
+local leaf = class()
 
 function leaf:_init(_type, value, prefix, line, column)
-   self:init_fields()
+   self.children = nil
 
-   assert(value, _type)
    self.value = value
-   assert(_type)
    self.type = _type
-
    self.line = line or 0
    self.column = column or 0
    self._prefix = prefix or {}
+end
+
+function leaf:is_leaf()
+   return true
 end
 
 function leaf:__eq(other)
@@ -136,6 +118,10 @@ end
 
 function leaf:__tostring()
    return self:prefix_to_string() .. tostring(self.value)
+end
+
+function leaf:get_value()
+   return tostring(self.value)
 end
 
 function leaf:clone()

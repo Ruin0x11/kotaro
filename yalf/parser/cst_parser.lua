@@ -47,8 +47,8 @@ function NodeTypes.repeat_statement(l_repeat, block, l_until, cond)
    return Node("repeat_statement", {l_repeat, block, l_until, cond})
 end
 
-function NodeTypes.function_block(l_function, name, block, l_end)
-   return Node("function_block", {l_function, name, block, l_end})
+function NodeTypes.function_declaration(l_function, name, block, l_end)
+   return Node("function_declaration", {l_function, name, block, l_end})
 end
 
 function NodeTypes.local_function_declaration(l_local, block)
@@ -92,7 +92,7 @@ function NodeTypes.value_list(rhs)
 end
 
 function NodeTypes.assignment_statement(lhs, l_equals, rhs)
-   return Node("assignment_statement", {lhs, l_equals, rhs})
+   return Node("assignment_statement", {lhs, l_equals or nil, rhs or nil})
 end
 
 function NodeTypes.parenthesized_expression(l_lparen, expr, l_rparen)
@@ -109,10 +109,6 @@ end
 
 function NodeTypes.constructor_key(l_lbracket, entries, l_rbracket)
    return Node("constructor_key", {l_lbracket, entries, l_rbracket})
-end
-
-function NodeTypes.constructor_value(value)
-   return Node("constructor_value", {value})
 end
 
 function NodeTypes.key_value_pair(key, l_equals, value)
@@ -155,16 +151,12 @@ function NodeTypes.arglist(args)
    return Node("arglist", args)
 end
 
-function NodeTypes.function_parameters_and_body(params, body)
-   return Node("function_parameters_and_body", {params, body})
-end
-
-function NodeTypes.function_parameters(l_lparen, arglist, l_rparen)
-   return Node("function_parameters", {l_lparen, arglist, l_rparen})
+function NodeTypes.function_parameters_and_body(l_lparen, params, l_rparen, body)
+   return Node("function_parameters_and_body", {l_lparen, params, l_rparen, body})
 end
 
 function NodeTypes.function_expression(l_function, body, l_end)
-   return Node("function_parameters", {l_function, body, l_end})
+   return Node("function_expression", {l_function, body, l_end})
 end
 
 -- Takes tokenized source and converts it to a Concrete Syntax Tree
@@ -249,11 +241,11 @@ function cst_parser:parse_function_args_and_body()
    local st, body = self:parse_block()
    if not st then return st, body end
 
+   -- BUG: prevent usage of expressions here
    local arglist = NodeTypes.arglist(args)
-   local func_params = NodeTypes.function_parameters(l_lparen, arglist, l_rparen)
 
    -- TODO: funcdef --> (def -> name -> parameters -> suite)
-   return true, NodeTypes.function_parameters_and_body(func_params, body)
+   return true, NodeTypes.function_parameters_and_body(l_lparen, arglist, l_rparen, body)
 end
 
 function cst_parser:parse_parenthesized_expression()
@@ -285,13 +277,18 @@ function cst_parser:parse_primary_expression()
    return true, expr
 end
 
-function cst_parser:parse_suffixed_expression(only_dots)
+function cst_parser:parse_suffixed_expression(mode)
    local st, primary = self:parse_primary_expression()
    if not st then return st, primary end
 
    local expr
    local exprs = { primary }
 
+   if mode == "local" then
+      return true, NodeTypes.suffixed_expression(exprs)
+   end
+
+   local only_dots = mode == "dots_and_colon"
    while true do
       if self.lexer:tokenIsSymbol(".") or self.lexer:tokenIsSymbol(":") then
          local l_dot_or_colon = self.lexer:consumeToken()
@@ -377,7 +374,7 @@ function cst_parser:parse_constructor_key()
    if not st then return st, val end
 
    local cons_key = NodeTypes.constructor_key(l_lbracket, key, l_rbracket)
-   local cons_val = NodeTypes.constructor_value(val)
+   local cons_val = val
 
    return true, NodeTypes.key_value_pair(cons_key, l_equals, cons_val)
 end
@@ -398,10 +395,7 @@ function cst_parser:parse_value_or_key()
       return true, NodeTypes.key_value_pair(key, l_equals, value)
    end
 
-   local st, value = self:parse_expression()
-   if not st then return st, value end
-
-   return true, NodeTypes.constructor_value(value)
+   return self:parse_expression()
 end
 
 function cst_parser:parse_constructor_expression()
@@ -766,7 +760,7 @@ function cst_parser:parse_repeat_block()
    return true, NodeTypes.repeat_statement(l_repeat, block, l_until, cond)
 end
 
-function cst_parser:parse_function_block()
+function cst_parser:parse_function_declaration()
    local l_function = self.lexer:consumeKeyword("function")
    assert(l_function)
 
@@ -774,7 +768,7 @@ function cst_parser:parse_function_block()
       return false, self:generate_error("Function name expected")
    end
 
-   local st, name = self:parse_suffixed_expression(true)
+   local st, name = self:parse_suffixed_expression("dots_and_colon")
    if not st then return false, name end
 
    local st, func = self:parse_function_args_and_body()
@@ -785,7 +779,7 @@ function cst_parser:parse_function_block()
       return false, self:generate_error("`end` expected")
    end
 
-   return true, NodeTypes.function_block(l_function, name, func, l_end)
+   return true, NodeTypes.function_declaration(l_function, name, func, l_end)
 end
 
 --
@@ -799,15 +793,15 @@ function cst_parser:parse_local()
    assert(l_local)
 
    if self.lexer:tokenIs("Ident") then
-      local st, suff = self:parse_suffixed_expression()
+      local st, suff = self:parse_suffixed_expression("local")
       if not st then return st, suff end
 
-      local st, assign = self:parse_assignment(suff)
+      local st, assign = self:parse_assignment(suff, "local")
       if not st then return st, assign end
 
       return true, NodeTypes.local_assignment(l_local, assign)
    elseif self.lexer:tokenIsKeyword("function") then
-      local st, func = self:parse_function_block()
+      local st, func = self:parse_function_declaration()
       if not st then return st, func end
       return true, NodeTypes.local_function_declaration(l_local, func)
    end
@@ -880,7 +874,7 @@ function cst_parser:parse_goto()
    return true, NodeTypes.goto_statement(l_goto, label)
 end
 
-function cst_parser:parse_assignment(suffixed)
+function cst_parser:parse_assignment(suffixed, mode)
    if suffixed.type == "parenthesized_expression" then
       return false, self:generate_error("Cannot assign to a parenthesized expression, is not an lvalue")
    end
@@ -889,7 +883,7 @@ function cst_parser:parse_assignment(suffixed)
    local l_comma = self.lexer:consumeSymbol(",")
    while l_comma do
       lhs[#lhs+1] = l_comma
-      local st, lhs_part = self:parse_suffixed_expression()
+      local st, lhs_part = self:parse_suffixed_expression(mode)
       if not st then return st, lhs_part end
 
       lhs[#lhs+1] = lhs_part
@@ -897,9 +891,15 @@ function cst_parser:parse_assignment(suffixed)
       l_comma = self.lexer:consumeSymbol(",")
    end
 
+   local lhs_node = NodeTypes.variable_list(lhs)
+
    local l_equals = self.lexer:consumeSymbol("=")
    if not l_equals then
-      return false, self:generate_error("`=` expected")
+      if mode == "local" then
+         return true, NodeTypes.assignment_statement(lhs_node)
+      else
+         return false, self:generate_error("`=` expected")
+      end
    end
 
    local rhs = {}
@@ -917,7 +917,6 @@ function cst_parser:parse_assignment(suffixed)
       rhs[#rhs+1] = rhs_part
    end
 
-   local lhs_node = NodeTypes.variable_list(lhs)
    local rhs_node = NodeTypes.value_list(rhs)
 
    return true, NodeTypes.assignment_statement(lhs_node, l_equals, rhs_node)
@@ -964,7 +963,7 @@ function cst_parser:parse_statement()
       elseif lookahead.value == "repeat" then
          st, stmt = self:parse_repeat_block()
       elseif lookahead.value == "function" then
-         st, stmt = self:parse_function_block()
+         st, stmt = self:parse_function_declaration()
       elseif lookahead.value == "local" then
          st, stmt = self:parse_local()
       elseif lookahead.value == "::" then

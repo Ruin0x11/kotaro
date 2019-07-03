@@ -225,13 +225,13 @@ function lexer:emit()
    local c = self:peek()
 
    --symbol to emit
-   local toEmit = nil
+   local toEmit = Leaf()
 
    --branch on type
    if c == '' then
       --eof
-      toEmit = { Type = 'Eof', Data = "" }
-
+      toEmit.type = "Eof"
+      toEmit.value = ""
    elseif UpperChars[c] or LowerChars[c] or c == '_' then
       --ident or keyword
       local start = self.p
@@ -241,10 +241,11 @@ function lexer:emit()
       until not (UpperChars[c] or LowerChars[c] or Digits[c] or c == '_')
       local dat = self.src:sub(start, self.p-1)
       if Keywords[dat] then
-         toEmit = {Type = 'Keyword', Data = dat}
+         toEmit.type = "Keyword"
       else
-         toEmit = {Type = 'Ident', Data = dat}
+         toEmit.type = "Ident"
       end
+      toEmit.value = dat
 
    elseif Digits[c] or (self:peek() == '.' and Digits[self:peek(1)]) then
       --number const
@@ -267,13 +268,13 @@ function lexer:emit()
             while Digits[self:peek()] do self:get() end
          end
       end
-      toEmit = {Type = 'Number', Data = self.src:sub(start, self.p-1)}
+      toEmit.type = "Number"
+      toEmit.value = self.src:sub(start, self.p-1)
 
    elseif c == '\'' or c == '\"' then
       local start = self.p
       --string const
       local delim = self:get()
-      local contentStart = self.p
       while true do
          local ch = self:get()
          if ch == '\\' then
@@ -284,87 +285,92 @@ function lexer:emit()
             self:generateError("Unfinished string near <eof>")
          end
       end
-      local content = self.src:sub(contentStart, self.p-2)
       local constant = self.src:sub(start, self.p-1)
-      toEmit = {Type = 'String', Data = constant, Constant = content}
+      toEmit.type = "String"
+      toEmit.value = constant
 
    elseif c == '[' then
-      local content, wholetext = self:tryGetLongString()
+      local _, wholetext = self:tryGetLongString()
       if wholetext then
-         toEmit = {Type = 'String', Data = wholetext, Constant = content}
+         toEmit.type = "String"
+         toEmit.value = wholetext
+         -- toEmit = {Type = 'String', Data = wholetext, Constant = content}
       else
          self:get()
-         toEmit = {Type = 'Symbol', Data = '['}
+         toEmit.type = "Symbol"
+         toEmit.value = "["
       end
 
    elseif self:consume('>=<') then
+      toEmit.type = "Symbol"
       if self:consume('=') then
-         toEmit = {Type = 'Symbol', Data = c..'='}
+         toEmit.value = c.."="
       else
-         toEmit = {Type = 'Symbol', Data = c}
+         toEmit.value = c
       end
 
    elseif self:consume('~') then
       if self:consume('=') then
-         toEmit = {Type = 'Symbol', Data = '~='}
+         toEmit.type = "Symbol"
+         toEmit.value = "~="
       else
          self:generateError("Unexpected symbol `~` in source.", 2)
       end
 
    elseif self:consume('.') then
+      toEmit.type = "Symbol"
       if self:consume('.') then
          if self:consume('.') then
-            toEmit = {Type = 'Symbol', Data = '...'}
+            toEmit.value = "..."
          else
-            toEmit = {Type = 'Symbol', Data = '..'}
+            toEmit.value = ".."
          end
       else
-         toEmit = {Type = 'Symbol', Data = '.'}
+         toEmit.value = "."
       end
 
    elseif self:consume(':') then
+      toEmit.type = "Symbol"
       if self:consume(':') then
-         toEmit = {Type = 'Symbol', Data = '::'}
+         toEmit.value = "::"
       else
-         toEmit = {Type = 'Symbol', Data = ':'}
+         toEmit.value = ":"
       end
 
    elseif Symbols[c] then
       self:get()
-      toEmit = {Type = 'Symbol', Data = c}
+      toEmit.type = "Symbol"
+      toEmit.value = c
 
    else
       local contents, all = self:tryGetLongString()
       if contents then
-         toEmit = {Type = 'String', Data = all, Constant = contents}
+         toEmit.type = "String"
+         toEmit.value = all
+         -- toEmit = {Type = 'String', Data = all, Constant = contents}
       else
          self:generateError("Unexpected Symbol `"..c.."` in source.", 2)
       end
    end
 
    --add the emitted symbol, after adding some common data
-   toEmit.LeadingWhite = leading -- table of leading whitespace/comments
+   toEmit._prefix = leading -- table of leading whitespace/comments
    --for k, tok in pairs(leading) do
    --	tokens[#tokens + 1] = tok
    --end
 
-   toEmit.Line = thisLine
-   toEmit.Char = thisChar
+   toEmit.line = thisLine
+   toEmit.column = thisChar
 
    return toEmit
 end
 
-local function toLeaf(tok)
-   return Leaf(tok.Type, tok.Data, tok.LeadingWhite, tok.Line, tok.Char)
-end
-
 function lexer:consumeToken()
    if #self.next == 0 then
-      self.next[1] = self:emit()
+      return self:emit()
    end
 
-   local tok = table.remove(self.next, 1)
-   return toLeaf(tok)
+   return table.remove(self.next, 1)
 end
 
 function lexer:peekToken(i)
@@ -375,7 +381,7 @@ function lexer:peekToken(i)
    while not self.next[i] do
       table.insert(self.next, self:emit())
    end
-   return toLeaf(self.next[i])
+   return self.next[i]
 end
 
 function lexer:tokenIs(_type)
