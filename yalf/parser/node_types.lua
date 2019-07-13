@@ -52,6 +52,16 @@ function base_mt:last_child()
    return c[#c]
 end
 
+function base_mt:raw_value()
+   local o = self[2]
+
+   if o then
+      return o:raw_value()
+   end
+
+   return nil
+end
+
 function base_mt:child_at(i)
    local c = self:children()
    return c[i]
@@ -559,27 +569,22 @@ local function remove_in_comma_list(node, i, braces)
    end
 
    local expr
-   print("remove",ind, #node, braces, 2 + braces * 2)
 
    if #node == 2 + braces * 2 then
       -- `single_arg` -> ``
       expr = table.remove(node, ind)
-      print(1)
    elseif ind == #node - braces then
       -- `first, second` -> `first`
       expr = table.remove(node, ind)
       table.remove(node, ind-1) -- comma
-      print(2)
    elseif ind == 2 + braces then
       -- `first, second` -> `second`
       expr = table.remove(node, ind)
       table.remove(node, ind) -- comma
-      print(3)
    else
       -- `first, second, third` -> `first, third`
       expr = table.remove(node, ind)
       table.remove(node, ind) -- comma
-      print(4)
    end
 
    return expr
@@ -589,7 +594,6 @@ local function insert_in_comma_list(node, i, item, braces)
    braces = braces or 0
    local Codegen = require("yalf.parser.codegen")
 
-   print(i,#node,braces)
    if i then
       i = i * 2 + braces
    else
@@ -602,7 +606,6 @@ local function insert_in_comma_list(node, i, item, braces)
       -- hack for aligning the new item to the same indent.
       local prefix = node:last_child():prefix()
       item:set_prefix(prefix)
-      print("get", node:last_child())
 
       local has_trailing_comma = type(node[i-1]) == "table" and node[i-1].value == ","
       if not has_trailing_comma then
@@ -929,6 +932,9 @@ function mt.leaf:eq_by_value(other)
    return self[1] == other[1]
       and self.leaf_type == other.leaf_type
       and self.value == other.value
+end
+function mt.leaf:raw_value()
+   return self.value
 end
 
 for k, v in pairs(mt) do

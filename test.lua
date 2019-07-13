@@ -102,7 +102,6 @@ function move_to_inner_table:applies_to(node)
    return true
 end
 function move_to_inner_table:execute(node)
-   print("APPLY")
    local target = node:index(self.target)
 
    for _, k in ipairs(self.keys) do
@@ -110,7 +109,6 @@ function move_to_inner_table:execute(node)
 
       if val then
          if target == nil then
-            print("Notarget")
             target = node:modify_index(self.target, Codegen.gen_constructor_expression({}))
          end
 

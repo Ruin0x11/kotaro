@@ -55,13 +55,19 @@ function visitor.visit_node(v, node, visit)
    end
 end
 
+local depth = 0
 function visitor.visit(v, node)
+   print("depth",depth)
    local r
 
    if node[1] == "leaf" then
       r = v:visit_leaf(node)
    elseif type(node[1]) == "string" then
+      print(node[1])
+      print(node:raw_value())
+      depth=depth+1
       r = v:visit_node(node, visitor.visit_node)
+      depth=depth-1
    else
       error("invalid node ".. require"inspect"(node))
    end
@@ -100,7 +106,7 @@ local refactoring_visitor = {}
 function refactoring_visitor:new(refactorings)
    local o = setmetatable({}, { __index = refactoring_visitor })
    o.refactorings = refactorings
-   self.order = self.order or "preorder"
+   self.is_preorder = self.order == "preorder"
    return o
 end
 
@@ -113,8 +119,7 @@ function refactoring_visitor:visit_leaf(node)
 end
 
 function refactoring_visitor:visit_node(node, visit)
-   print(self.order)
-   if self.order == "preorder" then
+   if self.is_preorder then
       visit(self, node, visit)
    end
 
@@ -124,7 +129,7 @@ function refactoring_visitor:visit_node(node, visit)
       end
    end
 
-   if self.order == "postorder" then
+   if not self.is_preorder then
       visit(self, node, visit)
    end
 end
