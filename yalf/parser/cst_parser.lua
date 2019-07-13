@@ -225,7 +225,7 @@ end
 
 function cst_parser:parse_value_or_key_value_pair()
    local lookahead = self.lexer:peekToken(2)
-   if lookahead.type == "Symbol" and lookahead.value == "=" then
+   if lookahead.leaf_type == "Symbol" and lookahead.value == "=" then
       local key = self.lexer:consumeToken()
 
       local l_equals = self.lexer:consumeSymbol("=")
@@ -733,7 +733,7 @@ function cst_parser:parse_goto()
 end
 
 function cst_parser:parse_assignment(suffixed, mode)
-   if suffixed.type == "parenthesized_expression" then
+   if suffixed:type() == "parenthesized_expression" then
       return false, self:generate_error("Cannot assign to a parenthesized expression, is not an lvalue")
    end
 
@@ -784,21 +784,10 @@ function cst_parser:parse_assignment_or_call()
    local st, suffixed = self:parse_suffixed_expression()
    if not st then return st, suffixed end
 
-   local stmt
+   local stmt = suffixed
    if self.lexer:tokenIsSymbol(",") or self.lexer:tokenIsSymbol("=") then
       st, stmt = self:parse_assignment(suffixed)
       if not st then return st, stmt end
-   else
-      local inner = suffixed:last_child()
-      assert(inner)
-      if inner[1] == "call_expression"
-         or inner[1] == "table_call_expression"
-         or inner[1] == "string_call_expression"
-      then
-         stmt = NodeTypes.call_statement(suffixed)
-      else
-         return false, self:generate_error("assignment statement expected")
-      end
    end
 
    return true, stmt
@@ -809,7 +798,7 @@ function cst_parser:parse_statement()
 
    local lookahead = self.lexer:peekToken()
 
-   if lookahead.type == "Keyword" then
+   if lookahead.leaf_type == "Keyword" then
       if lookahead.value == "if" then
          st, stmt = self:parse_if_block()
       elseif lookahead.value == "while" then

@@ -1,3 +1,5 @@
+local utils = require("yalf.utils")
+
 local ex = {}
 
 function ex:applies_to(node)
@@ -22,7 +24,7 @@ end
 local ex2 = {}
 
 function ex2:applies_to(node)
-   if node.type ~= "function_declaration" then
+   if node:type() ~= "function_declaration" then
       return false
    end
    --return suff_to_name(node.children[2]) == "ex:applies_to"
@@ -33,7 +35,7 @@ function ex2:execute(node)
    local body = node.children[3].children[4]
    local take = {}
    for i, statement in ipairs(body.children) do
-      if statement.type == "call_statement" then
+      if statement:type() == "call_statement" then
          take[#take+1] = i
       end
    end
@@ -48,4 +50,28 @@ function ex2:execute(node)
    end
 end
 
-return {ex, ex2}
+local require_to_hoge = {}
+
+local function is_function_call(node)
+end
+
+function require_to_hoge:applies_to(node)
+   return node:type() == "suffixed_expression"
+      and node:is_function_call()
+      and node:name() == "require"
+end
+
+function require_to_hoge:execute(node)
+   node:arguments():at(1):set("\"hogz\"")
+end
+
+return {
+   require_to_hoge,
+   on_hotload = function(old, new)
+      for k, v in ipairs(old) do
+         if type(v) == "table" then
+            utils.replace_table(v, new[k])
+         end
+      end
+   end
+}

@@ -81,3 +81,42 @@ end
 Codegen = require("yalf.parser.codegen")
 inspect = require("inspect")
 cst = file2cst()
+
+move_to_inner_table = { order = "preorder" }
+function move_to_inner_table:new(keys, target)
+   return setmetatable({keys = keys, target = target}, {__index = move_to_inner_table})
+end
+function move_to_inner_table:applies_to(node)
+   if node:type() ~= "constructor_expression" then
+      return false
+   end
+
+   local target = node:index(self.target)
+   if target and
+      (target:type() ~= "expression" or
+          target:primary_expression():type() ~= "constructor_expression")
+   then
+      return false
+   end
+
+   return true
+end
+function move_to_inner_table:execute(node)
+   print("APPLY")
+   local target = node:index(self.target)
+
+   for _, k in ipairs(self.keys) do
+      local val = node:index(k)
+
+      if val then
+         if target == nil then
+            print("Notarget")
+            target = node:modify_index(self.target, Codegen.gen_constructor_expression({}))
+         end
+
+         node:modify_index(k, nil)
+
+         target:primary_expression():modify_index(k, val)
+      end
+   end
+end

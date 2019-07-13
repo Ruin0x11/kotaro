@@ -1,5 +1,6 @@
 local NodeTypes = require("yalf.parser.node_types")
 local cst_parser = require("yalf.parser.cst_parser")
+local lexer = require("yalf.parser.lexer")
 
 local Codegen = {}
 
@@ -12,6 +13,11 @@ function Codegen.make_prefix(s)
    return leading
 end
 
+function Codegen.lex_one_token(src)
+   local l = lexer(src)
+   return l:emit()
+end
+
 function Codegen.gen_symbol(value)
    return NodeTypes.leaf("Symbol", value, Codegen.make_prefix(""), -1, -1)
 end
@@ -21,7 +27,7 @@ function Codegen.gen_keyword(value)
 end
 
 local function is_valid_lua_ident(str)
-   return type(str) == "string" and string.match(str, "[_%a][_%w]*")
+   return type(str) == "string" and string.match(str, "^[_%a][_%w]*$")
 end
 
 function Codegen.gen_ident(str)
@@ -30,6 +36,18 @@ function Codegen.gen_ident(str)
    end
 
    return NodeTypes.leaf("Ident", str, Codegen.make_prefix(""), -1, -1)
+end
+
+function Codegen.gen_string(value)
+   return NodeTypes.leaf("String", string.format("\"%s\"", value), Codegen.make_prefix(""), -1, -1)
+end
+
+function Codegen.convert_ident_to_expression(ident)
+   if type(ident) == "string" then
+      ident = Codegen.gen_ident(ident)
+   end
+   assert(ident.leaf_type == "Ident")
+   return NodeTypes.expression({NodeTypes.suffixed_expression({ident})})
 end
 
 function Codegen.gen_expression(expr)
@@ -50,7 +68,12 @@ function Codegen.gen_expression_from_value(value)
          ops = { leaf }
       end
    elseif _type == "string" then
-      ops = { NodeTypes.leaf("String", value) }
+      if is_valid_lua_ident(value) then
+      -- this handles the case of idents ("string") and strings ("\"string\"")
+         ops = { NodeTypes.suffixed_expression({Codegen.lex_one_token(value)}) }
+      else
+         ops = { Codegen.gen_string(value) }
+      end
    elseif _type == "boolean" then
       ops = { NodeTypes.leaf("Keyword", tostring(value)) }
    end
@@ -129,21 +152,54 @@ end
 
 function Codegen.gen_key_value_pair(key, value)
    if not value then
-      local value = key
+      -- array syntax, which omits key
+      local actual_value = key
 
-      local ok, new = cst_parser(value):parse_expression()
-      assert(ok, new)
-      return new
+      local expr
+      if type(actual_value) == "table" and actual_value[1] == "expression" then
+         expr = actual_value
+      else
+         expr = Codegen.gen_expression(actual_value)
+      end
+
+      return expr
    end
 
-   if not is_valid_lua_ident(key) then
-      key = string.format("[%s]", key)
+   local key_expr
+
+   if is_valid_lua_ident(key) then
+      key_expr = Codegen.convert_ident_to_expression(key)
+   else
+      local expr
+      if type(key) == "table" and key[1] == "expression" then
+         expr = key
+      elseif type(key) == "table" and key.leaf_type == "Ident" then
+         expr = Codegen.convert_ident_to_expression(key)
+      end
+      key_expr = NodeTypes.constructor_key(Codegen.gen_symbol("["), expr, Codegen.gen_symbol("]"))
    end
 
-   local ok, new = cst_parser(key .. " = " .. value):parse_constructor_entry()
-   assert(ok, new)
-   assert(new.value ~= "}")
-   return new
+   -- TODO: it quickly gets annoying to have to specify a multitude of
+   -- functions depending on the thing to use to generate an
+   -- expression. there should be a catch-all "generate expression"
+   -- function that behaves well no matter what is thrown at it -
+   -- plain Lua value, leaf node, or container node.
+   local value_expr
+   if type(value) == "table" and value[1] == "expression" then
+      value_expr = value
+   elseif type(key) == "table" and key.leaf_type == "Ident" then
+      value_expr = Codegen.convert_ident_to_expression(value)
+   else
+      value_expr = Codegen.gen_expression(value)
+   end
+
+   value_expr:set_prefix(" ")
+
+   return NodeTypes.key_value_pair(key_expr, Codegen.gen_symbol("="):set_prefix(" "), value_expr)
+end
+
+function Codegen.gen_constructor_expression(tbl)
+   return NodeTypes.expression({NodeTypes.constructor_expression(Codegen.gen_symbol("{"), tbl, Codegen.gen_symbol("}"))})
 end
 
 return Codegen

@@ -230,7 +230,7 @@ function lexer:emit()
    --branch on type
    if c == '' then
       --eof
-      toEmit.type = "Eof"
+      toEmit.leaf_type = "Eof"
       toEmit.value = ""
    elseif UpperChars[c] or LowerChars[c] or c == '_' then
       --ident or keyword
@@ -241,9 +241,9 @@ function lexer:emit()
       until not (UpperChars[c] or LowerChars[c] or Digits[c] or c == '_')
       local dat = self.src:sub(start, self.p-1)
       if Keywords[dat] then
-         toEmit.type = "Keyword"
+         toEmit.leaf_type = "Keyword"
       else
-         toEmit.type = "Ident"
+         toEmit.leaf_type = "Ident"
       end
       toEmit.value = dat
 
@@ -268,7 +268,7 @@ function lexer:emit()
             while Digits[self:peek()] do self:get() end
          end
       end
-      toEmit.type = "Number"
+      toEmit.leaf_type = "Number"
       toEmit.value = self.src:sub(start, self.p-1)
 
    elseif c == '\'' or c == '\"' then
@@ -286,23 +286,23 @@ function lexer:emit()
          end
       end
       local constant = self.src:sub(start, self.p-1)
-      toEmit.type = "String"
+      toEmit.leaf_type = "String"
       toEmit.value = constant
 
    elseif c == '[' then
       local _, wholetext = self:tryGetLongString()
       if wholetext then
-         toEmit.type = "String"
+         toEmit.leaf_type = "String"
          toEmit.value = wholetext
          -- toEmit = {Type = 'String', Data = wholetext, Constant = content}
       else
          self:get()
-         toEmit.type = "Symbol"
+         toEmit.leaf_type = "Symbol"
          toEmit.value = "["
       end
 
    elseif self:consume('>=<') then
-      toEmit.type = "Symbol"
+      toEmit.leaf_type = "Symbol"
       if self:consume('=') then
          toEmit.value = c.."="
       else
@@ -311,14 +311,14 @@ function lexer:emit()
 
    elseif self:consume('~') then
       if self:consume('=') then
-         toEmit.type = "Symbol"
+         toEmit.leaf_type = "Symbol"
          toEmit.value = "~="
       else
          self:generateError("Unexpected symbol `~` in source.", 2)
       end
 
    elseif self:consume('.') then
-      toEmit.type = "Symbol"
+      toEmit.leaf_type = "Symbol"
       if self:consume('.') then
          if self:consume('.') then
             toEmit.value = "..."
@@ -330,7 +330,7 @@ function lexer:emit()
       end
 
    elseif self:consume(':') then
-      toEmit.type = "Symbol"
+      toEmit.leaf_type = "Symbol"
       if self:consume(':') then
          toEmit.value = "::"
       else
@@ -339,13 +339,13 @@ function lexer:emit()
 
    elseif Symbols[c] then
       self:get()
-      toEmit.type = "Symbol"
+      toEmit.leaf_type = "Symbol"
       toEmit.value = c
 
    else
       local contents, all = self:tryGetLongString()
       if contents then
-         toEmit.type = "String"
+         toEmit.leaf_type = "String"
          toEmit.value = all
          -- toEmit = {Type = 'String', Data = all, Constant = contents}
       else
@@ -385,22 +385,22 @@ function lexer:peekToken(i)
 end
 
 function lexer:tokenIs(_type)
-   return self:peekToken().type == _type
+   return self:peekToken().leaf_type == _type
 end
 
 function lexer:tokenIsKeyword(kw)
    local t = self:peekToken()
-   return t.type == "Keyword" and t.value == kw
+   return t.leaf_type == "Keyword" and t.value == kw
 end
 
 function lexer:tokenIsSymbol(sym)
    local t = self:peekToken()
-   return t.type == "Symbol" and t.value == sym
+   return t.leaf_type == "Symbol" and t.value == sym
 end
 
 function lexer:consumeSymbol(sym)
    local t = self:peekToken()
-   if t.type == "Symbol" and t.value == sym then
+   if t.leaf_type == "Symbol" and t.value == sym then
       self:consumeToken()
       return t
    end
@@ -409,7 +409,7 @@ end
 
 function lexer:consumeKeyword(kw)
    local t = self:peekToken()
-   if t.type == "Keyword" and t.value == kw then
+   if t.leaf_type == "Keyword" and t.value == kw then
       self:consumeToken()
       return t
    end

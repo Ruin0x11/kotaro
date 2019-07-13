@@ -28,12 +28,12 @@ local function escape(str)
 end
 
 local function dump_node(node)
-   if node[1] == "leaf" then
+   if node:type() == "leaf" then
       return string.format("%s(%s) [line=%d, column=%d, prefix='%s']",
-                           string.upper(node.type), smart_quote(tostring(node.value)), node.line, node.column, escape(node:prefix_to_string()))
+                           string.upper(node.leaf_type), smart_quote(tostring(node.value)), node.line, node.column, escape(node:prefix_to_string()))
    else
       return string.format("%s [%d children]",
-                           node[1], -1)
+                           node[1], #node-1)
    end
 end
 
@@ -100,6 +100,7 @@ local refactoring_visitor = {}
 function refactoring_visitor:new(refactorings)
    local o = setmetatable({}, { __index = refactoring_visitor })
    o.refactorings = refactorings
+   self.order = self.order or "preorder"
    return o
 end
 
@@ -112,14 +113,20 @@ function refactoring_visitor:visit_leaf(node)
 end
 
 function refactoring_visitor:visit_node(node, visit)
-   -- TODO postorder
+   print(self.order)
+   if self.order == "preorder" then
+      visit(self, node, visit)
+   end
+
    for _, v in ipairs(self.refactorings) do
       if v:applies_to(node) then
          v:execute(node)
       end
    end
 
-   visit(self, node, visit)
+   if self.order == "postorder" then
+      visit(self, node, visit)
+   end
 end
 
 
