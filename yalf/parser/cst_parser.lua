@@ -1,168 +1,12 @@
 local class = require("thirdparty.pl.class")
-local nodes = require("yalf.parser.nodes")
-local Node = nodes.node
-local Leaf = nodes.leaf
 local lexer = require("yalf.parser.lexer")
 local utils = require("yalf.utils")
-
-local NodeTypes = {}
-
-function NodeTypes.program(tree, l_eof)
-   return Node("program", {tree, l_eof})
-end
-
-function NodeTypes.if_block(nodes)
-   return Node("if_block", nodes)
-end
-
-function NodeTypes.while_block(l_while, cond, l_do, body, l_end)
-   return Node("while_block", {l_while, cond, l_do, body, l_end})
-end
-
-function NodeTypes.do_block(l_do, body, l_end)
-   return Node("do_block", {l_do, body, l_end})
-end
-
-function NodeTypes.numeric_for_range(var_name, l_equals, start_expr, l_comma_a, end_expr, l_comma_b, step_expr)
-   return Node("numeric_for_range", {var_name, l_equals, start_expr, l_comma_a, end_expr, l_comma_b or nil, step_expr or nil})
-end
-
-function NodeTypes.generic_for_range(variables, l_in, generators)
-   return Node("generic_for_range", {variables, l_in, generators})
-end
-
-function NodeTypes.generic_for_variables(vars)
-   return Node("generic_for_variables", vars)
-end
-
-function NodeTypes.generic_for_generators(generators)
-   return Node("generic_for_generators", generators)
-end
-
-function NodeTypes.for_block(l_for, for_range, l_do, block, l_end)
-   return Node("for_block", {l_for, for_range, l_do, block, l_end})
-end
-
-function NodeTypes.repeat_statement(l_repeat, block, l_until, cond)
-   return Node("repeat_statement", {l_repeat, block, l_until, cond})
-end
-
-function NodeTypes.function_declaration(l_function, name, block, l_end)
-   return Node("function_declaration", {l_function, name, block, l_end})
-end
-
-function NodeTypes.local_function_declaration(l_local, block)
-   return Node("local_function_declaration", {l_local, block})
-end
-
-function NodeTypes.local_assignment(l_local, assign)
-   return Node("local_assignment", {l_local, assign})
-end
-
-function NodeTypes.block(children)
-   return Node("block", children)
-end
-
-function NodeTypes.label(label)
-   return Node("label", {label})
-end
-
-function NodeTypes.return_statement(l_return, exprs)
-   return Node("return_statement", {l_return, exprs})
-end
-
-function NodeTypes.break_statement(l_break)
-   return Node("break_statement", {l_break})
-end
-
-function NodeTypes.goto_statement(l_goto, label)
-   return Node("goto_statement", {l_goto, label})
-end
-
-function NodeTypes.call_statement(expr)
-   return Node("call_statement", {expr})
-end
-
-function NodeTypes.variable_list(lhs)
-   return Node("variable_list", lhs)
-end
-
-function NodeTypes.value_list(rhs)
-   return Node("value_list", rhs)
-end
-
-function NodeTypes.assignment_statement(lhs, l_equals, rhs)
-   return Node("assignment_statement", {lhs, l_equals or nil, rhs or nil})
-end
-
-function NodeTypes.parenthesized_expression(l_lparen, expr, l_rparen)
-   return Node("parenthesized_expression", {l_lparen, expr, l_rparen})
-end
-
-function NodeTypes.statement_with_semicolon(stmt, semicolon)
-   return Node("statement_with_semicolon", {stmt, semicolon})
-end
-
-function NodeTypes.expression(ops_and_numbers)
-   return Node("expression", ops_and_numbers)
-end
-
-function NodeTypes.constructor_key(l_lbracket, entries, l_rbracket)
-   return Node("constructor_key", {l_lbracket, entries, l_rbracket})
-end
-
-function NodeTypes.key_value_pair(key, l_equals, value)
-   return Node("key_value_pair", {key, l_equals, value})
-end
-
-function NodeTypes.constructor_body(entries)
-   return Node("constructor_body", entries)
-end
-
-function NodeTypes.constructor_expression(l_lbrace, body, l_rbrace)
-   return Node("constructor_expression", {l_lbrace, body, l_rbrace})
-end
-
-function NodeTypes.member_expression(l_dot_or_colon, id)
-   return Node("member_expression", {l_dot_or_colon, id})
-end
-
-function NodeTypes.index_expression(l_lbracket, expr, l_rbracket)
-   return Node("index_expression", {l_lbracket, expr, l_rbracket})
-end
-
-function NodeTypes.call_expression(l_lparen, arglist, l_rparen)
-   return Node("call_expression", {l_lparen, arglist, l_rparen})
-end
-
-function NodeTypes.table_call_expression(expr)
-   return Node("table_call_expression", {expr})
-end
-
-function NodeTypes.string_call_expression(l_str)
-   return Node("string_call_expression", {l_str})
-end
-
-function NodeTypes.suffixed_expression(nodes)
-   return Node("suffixed_expression", nodes)
-end
-
-function NodeTypes.arglist(args)
-   return Node("arglist", args)
-end
-
-function NodeTypes.function_parameters_and_body(l_lparen, params, l_rparen, body)
-   return Node("function_parameters_and_body", {l_lparen, params, l_rparen, body})
-end
-
-function NodeTypes.function_expression(l_function, body, l_end)
-   return Node("function_expression", {l_function, body, l_end})
-end
+local NodeTypes = require("yalf.parser.node_types")
 
 -- Takes tokenized source and converts it to a Concrete Syntax Tree
 -- (CST), which preserves whitespace and comments. The intent is to be
--- able to serialize the CST into a string containing the exact source
--- passed on.
+-- able to serialize the CST into a string containing the original
+-- source exactly as passed.
 local cst_parser = class()
 
 function cst_parser:_init(src)
@@ -238,11 +82,11 @@ function cst_parser:parse_function_args_and_body()
       end
    end
 
-   local st, body = self:parse_block()
+   local st, body = self:parse_statement_list()
    if not st then return st, body end
 
    -- BUG: prevent usage of expressions here
-   local arglist = NodeTypes.arglist(args)
+   local arglist = NodeTypes.ident_list(args)
 
    -- TODO: funcdef --> (def -> name -> parameters -> suite)
    return true, NodeTypes.function_parameters_and_body(l_lparen, arglist, l_rparen, body)
@@ -329,7 +173,7 @@ function cst_parser:parse_suffixed_expression(mode)
             end
          end
 
-         local arglist = NodeTypes.arglist(args)
+         local arglist = NodeTypes.expression_list(args)
 
          expr = NodeTypes.call_expression(l_lparen, arglist, l_rparen)
       elseif not only_dots and self.lexer:tokenIs("String") then
@@ -474,15 +318,15 @@ end
 
 function cst_parser:parse_simple_expression()
    if self.lexer:tokenIs("Number") then
-      return true, Leaf("number", self.lexer:consumeToken())
+      return true, self.lexer:consumeToken()
    elseif self.lexer:tokenIs("String") then
-      return true, Leaf("string", self.lexer:consumeToken())
+      return true, self.lexer:consumeToken()
    elseif self.lexer:tokenIsKeyword("nil") then
-      return true, Leaf("nil", self.lexer:consumeToken())
+      return true, self.lexer:consumeToken()
    elseif self.lexer:tokenIsKeyword("false") or self.lexer:tokenIsKeyword("true") then
-      return true, Leaf("boolean", self.lexer:consumeToken())
+      return true, self.lexer:consumeToken()
    elseif self.lexer:tokenIsSymbol("...") then
-      return true, Leaf("varargs", self.lexer:consumeToken())
+      return true, self.lexer:consumeToken()
    elseif self.lexer:tokenIsSymbol("{") then
       return self:parse_constructor_expression()
    elseif self.lexer:tokenIsKeyword("function") then
@@ -570,7 +414,7 @@ function cst_parser:parse_if_block()
 
       nodes[#nodes+1] = l_then
 
-      local st, body = self:parse_block()
+      local st, body = self:parse_statement_list()
       if not st then return false, body end
 
       nodes[#nodes+1] = body
@@ -585,7 +429,7 @@ function cst_parser:parse_if_block()
    if l_else then
       nodes[#nodes+1] = l_else
 
-      local st, body = self:parse_block()
+      local st, body = self:parse_statement_list()
       if not st then return false, body end
 
       nodes[#nodes+1] = body
@@ -613,7 +457,7 @@ function cst_parser:parse_while_block()
       return false, self:generate_error("`do` expected.")
    end
 
-   local st, body = self:parse_block()
+   local st, body = self:parse_statement_list()
    if not st then return false, body end
 
    local l_end = self.lexer:consumeKeyword("end")
@@ -628,7 +472,7 @@ function cst_parser:parse_do_block()
    local l_do = self.lexer:consumeKeyword("do")
    assert(l_do)
 
-   local st, body = self:parse_block()
+   local st, body = self:parse_statement_list()
    if not st then return false, body end
 
    local l_end = self.lexer:consumeKeyword("end")
@@ -701,8 +545,8 @@ function cst_parser:parse_generic_for_range(var_name)
       l_comma = self.lexer:consumeSymbol(",")
    end
 
-   local vars_node = NodeTypes.generic_for_variables(vars)
-   local generators_node = NodeTypes.generic_for_generators(generators)
+   local vars_node = NodeTypes.ident_list(vars)
+   local generators_node = NodeTypes.expression_list(generators)
 
    return true, NodeTypes.generic_for_range(vars_node, l_in, generators_node)
 end
@@ -731,7 +575,7 @@ function cst_parser:parse_for_block()
       return false, self:generate_error("`do` expected.")
    end
 
-   local st, block = self:parse_block()
+   local st, block = self:parse_statement_list()
    if not st then return st, block end
 
    local l_end = self.lexer:consumeKeyword("end")
@@ -746,7 +590,7 @@ function cst_parser:parse_repeat_block()
    local l_repeat = self.lexer:consumeKeyword("repeat")
    assert(l_repeat)
 
-   local st, block = self:parse_block()
+   local st, block = self:parse_statement_list()
    if not st then return st, block end
 
    local l_until = self.lexer:consumeKeyword("until")
@@ -803,7 +647,7 @@ function cst_parser:parse_local()
    elseif self.lexer:tokenIsKeyword("function") then
       local st, func = self:parse_function_declaration()
       if not st then return st, func end
-      return true, NodeTypes.local_function_declaration(l_local, func)
+      return true, NodeTypes.function_declaration__local(l_local, func)
    end
 
    return false, self:generate_error("local var or function def expected")
@@ -849,9 +693,9 @@ function cst_parser:parse_return()
       end
    end
 
-   local value_list = NodeTypes.value_list(exprs)
+   local expr_list = NodeTypes.expression_list(exprs)
 
-   return true, NodeTypes.return_statement(l_return, value_list)
+   return true, NodeTypes.return_statement(l_return, expr_list)
 end
 
 function cst_parser:parse_break()
@@ -891,7 +735,7 @@ function cst_parser:parse_assignment(suffixed, mode)
       l_comma = self.lexer:consumeSymbol(",")
    end
 
-   local lhs_node = NodeTypes.variable_list(lhs)
+   local lhs_node = NodeTypes.ident_list(lhs)
 
    local l_equals = self.lexer:consumeSymbol("=")
    if not l_equals then
@@ -917,7 +761,7 @@ function cst_parser:parse_assignment(suffixed, mode)
       rhs[#rhs+1] = rhs_part
    end
 
-   local rhs_node = NodeTypes.value_list(rhs)
+   local rhs_node = NodeTypes.expression_list(rhs)
 
    return true, NodeTypes.assignment_statement(lhs_node, l_equals, rhs_node)
 end
@@ -931,11 +775,11 @@ function cst_parser:parse_assignment_or_call()
       st, stmt = self:parse_assignment(suffixed)
       if not st then return st, stmt end
    else
-      local inner = suffixed.children[#suffixed.children]
+      local inner = suffixed:last_child()
       assert(inner)
-      if inner.type == "call_expression"
-         or inner.type == "table_call_expression"
-         or inner.type == "string_call_expression"
+      if inner[1] == "call_expression"
+         or inner[1] == "table_call_expression"
+         or inner[1] == "string_call_expression"
       then
          stmt = NodeTypes.call_statement(suffixed)
       else
@@ -991,7 +835,7 @@ end
 
 local block_end_kwords = utils.set{"end", "else", "elseif", "until"}
 
-function cst_parser:parse_block()
+function cst_parser:parse_statement_list()
    local statements = {}
 
    while not (block_end_kwords[self.lexer:peekToken().value] or self.lexer:isEof()) do
@@ -1001,11 +845,11 @@ function cst_parser:parse_block()
       statements[#statements+1] = statement
    end
 
-   return true, NodeTypes.block(statements)
+   return true, NodeTypes.statement_list(statements)
 end
 
 function cst_parser:parse()
-   local st, tree = self:parse_block()
+   local st, tree = self:parse_statement_list()
    if not st then
       return false, tree
    end

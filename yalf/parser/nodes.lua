@@ -88,6 +88,13 @@ function node:append_child(child)
    table.insert(self.children, child)
 end
 
+function node:remove_child(i)
+   local child = self.children[i]
+   child.parent = nil
+   table.remove(self.children, i)
+   return child
+end
+
 local leaf = class()
 
 function leaf:_init(_type, value, prefix, line, column)
@@ -98,6 +105,7 @@ function leaf:_init(_type, value, prefix, line, column)
    self.line = line or 0
    self.column = column or 0
    self._prefix = prefix or {}
+   self.is_leaf = true
 end
 
 function leaf:is_leaf()

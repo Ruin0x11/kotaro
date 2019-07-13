@@ -1,108 +1,83 @@
-local nodes, asd = require("yalf.parser.nodes")
-local node = nodes.node
-local leaf = nodes.leaf
-local lexer = require("pl.lexer")
+hotload = require("hotload")
+hotload.hook_global_require()
 
-local sw = require("stopwatch")()
+stopwatch = require("stopwatch")
+visitors = require("yalf.visitor.visitors")
+visitor = visitors.visitor
+tree_utils = require("yalf.parser.tree_utils")
 
-local a = node("test", {leaf("asd", "dood"),leaf("zxc", "zxc")})
-local b = node("test", {leaf("asd", "dood"),leaf("zxc", "zxc")})
+function file2src(file)
+   file = file or "test_refactoring.lua"
 
--- print(a == b)
-
-
-local visitors = require("yalf.visitor.visitors")
-local print_visitor = visitors.print_visitor
-local visitor = visitors.visitor
-
--- print_visitor():visit(a)
-
-local inf = io.open(arg[1], 'r')
-if not inf then --comment
-   print("Failed to open `"..arg[1].."` for reading")
-   return
-end
---
-local sourceText = inf:read('*all')
-inf:close()
-
-local l = require("yalf.parser.lexer")(sourceText)
-local i = require("inspect")
-
-sw:measure()
-local cst_parser = require("yalf.parser.cst_parser")
-local a, new = cst_parser(sourceText):parse()
-sw:p("parse")
-if not a then
-   print(new)
-end
-
-local f1 = io.open("/tmp/f1", "w")
-local f2 = io.open("/tmp/f2", "w")
-f1:write(sourceText)
-f2:write(tostring(new))
-f1:close()
-f2:close()
-
-if new ~= sourceText then
-   os.execute("diff /tmp/f1 /tmp/f2 --color=always")
-end
-
-
-local change_execute = {}
-
-local function get_function(call_stmt)
-   local s = ""
-   local dood = call_stmt.children[1]
-   for i=1,#dood.children-1 do
-      s = s .. dood.children[i]:get_value()
+   local inf = io.open(file, 'r')
+   if not inf then --comment
+      print("Failed to open `"..file.."` for reading")
+      return
    end
-   print(s)
+   local s = inf:read('*all')
+   inf:close()
+
    return s
 end
 
-local function dump(node)
-   visitor.visit(print_visitor:new(), node)
+function src2cst(code)
+   local sw = stopwatch()
+
+   local cst_parser = require("yalf.parser.cst_parser")
+   local a, new = cst_parser(code):parse()
+   assert(a)
+
+   sw:p("parse")
+
+   return new
 end
 
-local ast_maker = require("yalf.parser.ast_maker")
-local ast = ast_maker:new()
+function cst2src(cst)
+   local string_io = {
+      stream = "",
+      write = function(self, s)
+         self.stream = self.stream .. s
+      end
+   }
+   local v = visitors.code_convert_visitor:new(string_io)
+   visitor.visit(v, cst)
+   return string_io.stream
+end
 
-local result = ast:visit(new)
-sw:p("astmake")
+function parse_compare(file)
+   local orig = file2src(file)
+   local cst = src2cst(orig)
 
-local class = require("thirdparty.pl.class")
+   local result = cst2src(cst)
 
--- visitor.visit(visitors.ast_print_visitor:new(), result)
--- print(result)
+   if result ~= orig then
+      local f1 = io.open("/tmp/f1", "w")
+      local f2 = io.open("/tmp/f2", "w")
+      f1:write(orig)
+      f2:write(result)
+      f1:close()
+      f2:close()
 
-local ex = {}
-
-function ex:applies_to(node)
-   if node.type ~= "FunctionDeclaration" then
-      return false
+      os.execute("diff /tmp/f1 /tmp/f2 --color=always")
    end
-
-   print(node:get_declarer())
-   print(node:get_full_name())
-   print(node:get_args():get_nth(1))
-   return node:get_declarer() == "_M"
 end
 
-function ex:execute(node)
-   node:set_declarer("Asdfg")
+function file2cst(file)
+   return src2cst(file2src(file))
 end
 
-local ex2 = {}
-
-function ex2:applies_to(node)
+function dump(cst)
+   tree_utils.dump(cst)
 end
 
-function ex2:execute(node)
+function refactor_file(file, refs)
+   local cst = file2cst(file)
+
+   visitor.visit(visitors.refactoring_visitor:new(refs or require("test_refactoring")), cst)
+
+   return cst
 end
 
-local rf = visitors.refactoring_visitor:new({ex})
-
-visitor.visit(rf, result)
-
---print(tostring(result))
+Codegen = require("yalf.parser.codegen")
+inspect = require("inspect")
+cst = file2cst()

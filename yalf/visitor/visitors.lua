@@ -1,6 +1,4 @@
-local nodes = require("yalf.parser.nodes")
-local Node = nodes.node
-local Leaf = nodes.leaf
+local utils = require("yalf.utils")
 
 -- from inspect.lua
 local function smart_quote(str)
@@ -30,29 +28,46 @@ local function escape(str)
 end
 
 local function dump_node(node)
-   if node:is_leaf() then
+   if node[1] == "leaf" then
       return string.format("%s(%s) [line=%d, column=%d, prefix='%s']",
                            string.upper(node.type), smart_quote(tostring(node.value)), node.line, node.column, escape(node:prefix_to_string()))
    else
       return string.format("%s [%d children]",
-                           node.type, #node.children)
+                           node[1], -1)
    end
 end
 
+
+function table.keys(tbl)
+   local arr = {}
+   for k, _ in pairs(tbl) do
+      arr[#arr+1] = k
+   end
+   return arr
+end
 
 local visitor = {}
 
 function visitor.visit_node(v, node, visit)
-   for _, child in ipairs(node.children) do
-      visitor.visit(v, child)
+   for _, child in node:iter_rest() do
+      local r = visitor.visit(v, child)
+      if r then return r end
    end
 end
 
 function visitor.visit(v, node)
-   if node:is_leaf() then
-      v:visit_leaf(node)
+   local r
+
+   if node[1] == "leaf" then
+      r = v:visit_leaf(node)
+   elseif type(node[1]) == "string" then
+      r = v:visit_node(node, visitor.visit_node)
    else
-      v:visit_node(node, visitor.visit_node)
+      error("invalid node ".. require"inspect"(node))
+   end
+
+   if r then
+      return r
    end
 end
 
@@ -108,37 +123,39 @@ function refactoring_visitor:visit_node(node, visit)
 end
 
 
-local ast_print_visitor = {}
+local code_convert_visitor = {}
 
-function ast_print_visitor:new(stream)
-   local o = setmetatable({}, { __index = ast_print_visitor })
+function code_convert_visitor:new(stream, params)
+   local o = setmetatable({ params = params, first_prefix = false }, { __index = code_convert_visitor })
    o.stream = stream or { stream = io, write = function(t, ...) t.stream.write(...) end }
-   o.indent = 0
    return o
 end
 
-local function dump_node(node)
-   return string.format("%s(%s)", node.type, node:get_value())
-end
-
-function ast_print_visitor:print_node(node)
-   self.stream:write(string.format("%s%s\n", string.rep(' ', self.indent), dump_node(node)))
-end
-
-function ast_print_visitor:visit_node(node, visit)
-   self:print_node(node)
-   self.indent = self.indent + 2
+function code_convert_visitor:visit_node(node, visit)
    visit(self, node, visit)
-   self.indent = self.indent - 2
 end
 
-function ast_print_visitor:visit_leaf(leaf)
-   self:print_node(leaf)
+function code_convert_visitor:visit_leaf(leaf)
+   local no_ws = self.params.no_whitespace
+   if not self.first_prefix then
+      self.first_prefix = true
+      if self.params.no_leading_whitespace then
+         no_ws = true
+      end
+   end
+   self.stream:write(leaf:as_string(no_ws))
 end
 
 return {
    visitor = visitor,
    print_visitor = print_visitor,
    refactoring_visitor = refactoring_visitor,
-   ast_print_visitor = ast_print_visitor
+   code_convert_visitor = code_convert_visitor,
+   on_hotload = function(old, new)
+      for k, v in pairs(old) do
+         if type(v) == "table" then
+            utils.replace_table(v, new[k])
+         end
+      end
+   end
 }

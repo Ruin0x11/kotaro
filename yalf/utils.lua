@@ -16,4 +16,23 @@ function utils.copy(t)
    return n
 end
 
+function utils.replace_table(tbl, other)
+   if tbl == other then
+      return tbl
+   end
+
+   for k, _ in pairs(tbl) do
+      tbl[k] = nil
+   end
+
+   for k, v in pairs(other) do
+      tbl[k] = v
+   end
+
+   local mt = getmetatable(other)
+   setmetatable(tbl, mt)
+
+   return tbl
+end
+
 return utils

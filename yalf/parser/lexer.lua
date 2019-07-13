@@ -1,6 +1,6 @@
 local class = require("pl.class")
 local utils = require("yalf.utils")
-local Leaf = require("yalf.parser.nodes").leaf
+local NodeTypes = require("yalf.parser.node_types")
 
 local WhiteChars = utils.set{' ', '\n', '\t', '\r'}
 local EscapeLookup = {['\r'] = '\\r', ['\n'] = '\\n', ['\t'] = '\\t', ['"'] = '\\"', ["'"] = "\\'"}
@@ -225,7 +225,7 @@ function lexer:emit()
    local c = self:peek()
 
    --symbol to emit
-   local toEmit = Leaf()
+   local toEmit = NodeTypes.leaf()
 
    --branch on type
    if c == '' then
