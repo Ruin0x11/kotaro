@@ -127,4 +127,23 @@ function Codegen.gen_expression_list(...)
    return list
 end
 
+function Codegen.gen_key_value_pair(key, value)
+   if not value then
+      local value = key
+
+      local ok, new = cst_parser(value):parse_expression()
+      assert(ok, new)
+      return new
+   end
+
+   if not is_valid_lua_ident(key) then
+      key = string.format("[%s]", key)
+   end
+
+   local ok, new = cst_parser(key .. " = " .. value):parse_constructor_entry()
+   assert(ok, new)
+   assert(new.value ~= "}")
+   return new
+end
+
 return Codegen

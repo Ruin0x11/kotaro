@@ -10,8 +10,8 @@ local NodeTypes = require("yalf.parser.node_types")
 local cst_parser = class()
 
 function cst_parser:_init(src)
-   self.src = src
-   self.lexer = lexer(src)
+   self.src = tostring(src)
+   self.lexer = lexer(self.src)
 end
 
 function cst_parser:generate_error(msg)
@@ -196,7 +196,7 @@ function cst_parser:parse_suffixed_expression(mode)
    return true, NodeTypes.suffixed_expression(exprs)
 end
 
-function cst_parser:parse_constructor_key()
+function cst_parser:parse_constructor_key_value()
    -- literal key like [1] or ["some.key"]
    local l_lbracket = self.lexer:consumeSymbol("[")
    assert(l_lbracket)
@@ -223,7 +223,7 @@ function cst_parser:parse_constructor_key()
    return true, NodeTypes.key_value_pair(cons_key, l_equals, cons_val)
 end
 
-function cst_parser:parse_value_or_key()
+function cst_parser:parse_value_or_key_value_pair()
    local lookahead = self.lexer:peekToken(2)
    if lookahead.type == "Symbol" and lookahead.value == "=" then
       local key = self.lexer:consumeToken()
@@ -242,6 +242,32 @@ function cst_parser:parse_value_or_key()
    return self:parse_expression()
 end
 
+function cst_parser:parse_constructor_entry()
+   local result
+
+   if self.lexer:tokenIsSymbol("[") then
+      local st, key = self:parse_constructor_key_value()
+      if not st then return st, key end
+      result = key
+   elseif self.lexer:tokenIs("Ident") then
+      local st, value_or_kv_pair = self:parse_value_or_key_value_pair()
+      if not st then return st, value_or_kv_pair end
+      result = value_or_kv_pair
+   else
+         local l_rbracket = self.lexer:consumeSymbol("}")
+         if l_rbracket then
+            return true, l_rbracket
+         else
+            local st, value = self:parse_expression()
+            if not st then return false, self:generate_error("value expected") end
+
+            return true, value
+         end
+   end
+
+   return true, result
+end
+
 function cst_parser:parse_constructor_expression()
    local l_lbracket = self.lexer:consumeSymbol("{")
    assert(l_lbracket)
@@ -250,27 +276,17 @@ function cst_parser:parse_constructor_expression()
    local entries = {}
 
    while true do
-      if self.lexer:tokenIsSymbol("[") then
-         local st, key = self:parse_constructor_key()
-         if not st then return st, key end
-         entries[#entries+1] = key
-      elseif self.lexer:tokenIs("Ident") then
-         local st, value_or_key = self:parse_value_or_key()
-         if not st then return st, value_or_key end
-         entries[#entries + 1] = value_or_key
-      else
-         l_rbracket = self.lexer:consumeSymbol("}")
-         if l_rbracket then
-            break
-         else
-            local st, value = self:parse_expression()
-            if not st then return false, self:generate_error("value expected") end
+      local ok, entry = self:parse_constructor_entry()
+      if not ok then return false, entry end
 
-            entries[#entries+1] = value
-         end
+      if entry[1] == "leaf" and entry.value == "}" then
+         l_rbracket = entry
+         break
+      else
+         entries[#entries+1] = entry
       end
 
-      local ok = false
+      ok = false
       local l_semicolon = self.lexer:consumeSymbol(";")
       if l_semicolon then
          entries[#entries+1] = l_semicolon
@@ -295,9 +311,7 @@ function cst_parser:parse_constructor_expression()
       end
    end
 
-   local body = NodeTypes.constructor_body(entries)
-
-   return true, NodeTypes.constructor_expression(l_lbracket, body, l_rbracket)
+   return true, NodeTypes.constructor_expression(l_lbracket, entries, l_rbracket)
 end
 
 function cst_parser:parse_function_expression()

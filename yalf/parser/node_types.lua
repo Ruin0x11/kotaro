@@ -364,26 +364,6 @@ function mt.expression.init(ops_and_numbers)
    return { "expression", unpack(ops_and_numbers) }
 end
 
-mt.constructor_key = {}
-function mt.constructor_key.init(l_lbracket, entries, l_rbracket)
-   return { "constructor_key", l_lbracket, entries, l_rbracket }
-end
-
-mt.key_value_pair = {}
-function mt.key_value_pair.init(key, l_equals, value)
-   return { "key_value_pair", key, l_equals, value }
-end
-
-mt.constructor_body = {}
-function mt.constructor_body.init(entries)
-   return {"constructor_body", unpack(entries) }
-end
-
-mt.constructor_expression = {}
-function mt.constructor_expression.init(l_lbrace, body, l_rbrace)
-   return { "constructor_expression", l_lbrace, body, l_rbrace }
-end
-
 mt.member_expression = {}
 function mt.member_expression.init(l_dot_or_colon, id)
    return { "member_expression", l_dot_or_colon, id }
@@ -476,41 +456,49 @@ function mt.suffixed_expression:set_declarer(declarer, method)
    return self
 end
 
-local function remove_in_comma_list(node, i)
-   local ind = i * 2
+local function remove_in_comma_list(node, i, braces)
+   braces = braces or 0
+   local ind = i * 2 + braces
    if not node[ind] then
       return nil
    end
 
    local expr
+   print("remove",ind, #node, braces, 2 + braces * 2)
 
-   if #node == 2 then
+   if #node == 2 + braces * 2 then
       -- `single_arg` -> ``
       expr = table.remove(node, ind)
-   elseif ind == #node then
-      -- `first, second` -> `return first`
+      print(1)
+   elseif ind == #node - braces then
+      -- `first, second` -> `first`
       expr = table.remove(node, ind)
       table.remove(node, ind-1) -- comma
+      print(2)
    else
-      -- `first, second, third` -> `return first, third`
+      -- `first, second, third` -> `first, third`
       expr = table.remove(node, ind)
       table.remove(node, ind) -- comma
+      print(3)
    end
 
    return expr
 end
 
-local function insert_in_comma_list(node, i, item)
+local function insert_in_comma_list(node, i, item, braces)
+   braces = braces or 0
    local Codegen = require("yalf.parser.codegen")
 
+   print(i,#node,braces)
    if i then
-      i = i * 2
+      i = i * 2 + braces
    else
-      i = #node + 1
+      i = #node + 1 - braces
    end
+   print("get", i,#node-braces)
 
-   if #node == 1 then
-      table.insert(node, item)
+   if #node == 1 + 2 * braces then
+      table.insert(node, #node+1-braces, item)
    else
       table.insert(node, i, Codegen.gen_symbol(","):set_prefix(" "))
       table.insert(node, i+1, item)
@@ -535,7 +523,7 @@ function mt.statement_list:remove(i)
 end
 function mt.statement_list:insert(stmt, i)
    if i then
-      if i < 1 then
+      if i < 1 or i > #self then
          return
       end
       table.insert(self, i + 1, stmt)
@@ -588,13 +576,6 @@ function mt.expression_list:insert(expr, i)
    end
 
    insert_in_comma_list(self, i, expr)
-
-   if #self == 1 then
-      self[#self+1] = expr
-   else
-      self[#self+1] = Codegen.gen_symbol(","):set_prefix(" ")
-      self[#self+1] = expr
-   end
 end
 function mt.expression_list:clear()
    clear(self)
@@ -605,6 +586,55 @@ function mt.expression_list:children()
       c[#c+1] = self[i]
    end
    return c
+end
+
+mt.constructor_key = {}
+function mt.constructor_key.init(l_lbracket, entries, l_rbracket)
+   return { "constructor_key", l_lbracket, entries, l_rbracket }
+end
+
+mt.key_value_pair = {}
+function mt.key_value_pair.init(key, l_equals, value)
+   return { "key_value_pair", key, l_equals, value }
+end
+
+mt.constructor_expression = {}
+function mt.constructor_expression.init(l_lbracket, body, l_rbracket)
+   local t = { "constructor_expression", l_lbracket }
+   for _, v in ipairs(body) do
+      t[#t+1] = v
+   end
+   t[#t+1] = l_rbracket
+   return t
+end
+function mt.constructor_expression:children()
+   local c = {}
+   for i=3,#self-1,2 do
+      c[#c+1] = self[i]
+   end
+   return c
+end
+function mt.constructor_expression:remove(i)
+   return remove_in_comma_list(self, i, 1)
+end
+function mt.constructor_expression:clear()
+   local l_rbrace = self[#self]
+   assert(l_rbrace.value == "}")
+   for i=3,#self do
+      self[i] = nil
+   end
+   self[4] = l_rbrace
+end
+function mt.constructor_expression:insert(kv_pair, i)
+   local Codegen = require("yalf.parser.codegen")
+
+   if type(kv_pair) == "table" and type(kv_pair[1]) == "string" then
+      kv_pair = Codegen.gen_key_value_pair(kv_pair[1], kv_pair[2])
+   elseif type(kv_pair) ~= "table" then
+      kv_pair = Codegen.gen_key_value_pair(kv_pair)
+   end
+
+   insert_in_comma_list(self, i, kv_pair, 1)
 end
 
 mt.function_parameters_and_body = {}
