@@ -3,9 +3,11 @@ local visitor = visitors.visitor
 local tree_utils = require("yalf.parser.tree_utils")
 local utils = require("yalf.utils")
 
-local function all_but_first(tbl)
+-- TODO: iterator instead of table
+local function all_but_first(tbl, n)
+   n = n or 1
    local result = {}
-   for i=2,#tbl do
+   for i=1+n,#tbl do
       result[#result+1] = tbl[i]
    end
    return result
@@ -60,6 +62,27 @@ function base_mt:raw_value()
    end
 
    return nil
+end
+
+function base_mt:first_leaf()
+   local leaf = self
+   while leaf and leaf[1] ~= "leaf" do
+      leaf = leaf[2]
+   end
+   return leaf
+end
+
+function base_mt:last_leaf()
+   local leaf = self
+   while leaf and leaf[1] ~= "leaf" do
+      leaf = leaf[#leaf]
+   end
+   return leaf
+end
+
+function base_mt:right_boundary()
+   local leaf = self:first_leaf()
+   return leaf and leaf:right_boundary()
 end
 
 function base_mt:child_at(i)
@@ -122,6 +145,11 @@ function base_mt:set_prefix(prefix)
    return self
 end
 
+function base_mt:was_split()
+   local leaf = self:first_leaf()
+   return leaf and leaf:was_split()
+end
+
 local find_visitor = {}
 function find_visitor:new(pred, nesting)
    return setmetatable({ pred = pred, depth = 0, nesting = nesting or 0 }, { __index = find_visitor })
@@ -159,6 +187,34 @@ end
 function base_mt:find_child_of_type(_type, nesting)
    local pred = function(i) return i[1] == _type end
    return self:find_child(pred, nesting)
+end
+
+function base_mt:find_parent(pred)
+   local index_in_parent
+   local parent = self.parent
+   local one_less = self
+
+   while parent do
+      if pred(parent) then
+         for i, v in ipairs(parent) do
+            if v == one_less then
+               index_in_parent = i
+               break
+            end
+         end
+
+         return parent, index_in_parent
+      end
+      one_less = parent
+      parent = parent.parent
+   end
+
+   return parent
+end
+
+function base_mt:find_parent_of_type(_type)
+   local pred = function(i) return i[1] == _type end
+   return self:find_parent(pred)
 end
 
 function base_mt:__tostring()
@@ -327,11 +383,6 @@ function NodeTypes.function_declaration__local(l_local, n_function_declaration)
    return n_function_declaration
 end
 
-mt.local_assignment = {}
-function mt.local_assignment.init(l_local, assign)
-   return { "local_assignment", l_local, assign }
-end
-
 mt.label = {}
 function mt.label.init(label)
    return { "label", label }
@@ -385,6 +436,30 @@ function mt.assignment_statement.init(lhs, l_equals, rhs)
       assert(l_equals)
    end
    return { "assignment_statement", lhs, l_equals or nil, rhs or nil }
+end
+function mt.assignment_statement:make_local(l_local)
+   local Codegen = require("yalf.parser.codegen")
+
+   if self:is_local() then
+      return
+   end
+   if not l_local then
+      l_local = Codegen.gen_keyword("local")
+   end
+   table.insert(self, 2, l_local)
+end
+function mt.assignment_statement:make_global()
+   if not self:is_local() then
+      return
+   end
+   table.remove(self, 2)
+end
+function mt.assignment_statement:is_local()
+   return self[2].value == "local"
+end
+function NodeTypes.assignment_statement__local(l_local, n_assignment_statement)
+   n_assignment_statement:make_local(l_local)
+   return n_assignment_statement
 end
 
 mt.parenthesized_expression = {}
@@ -560,6 +635,9 @@ end
 function mt.suffixed_expression:primary_expression()
    return self[2]
 end
+function mt.suffixed_expression:nonprimary_expressions()
+   return all_but_first(self, 2)
+end
 
 local function remove_in_comma_list(node, i, braces)
    braces = braces or 0
@@ -662,6 +740,14 @@ end
 function mt.ident_list:at(i)
    return self[i*2]
 end
+function mt.ident_list:count()
+   if #self == 1 then
+      return 0
+   elseif #self == 2 then
+      return 1
+   end
+   return math.floor((#self-1) / 2)
+end
 function mt.ident_list:clear()
    clear(self)
 end
@@ -685,8 +771,15 @@ function mt.ident_list:insert(ident, i)
    insert_in_comma_list(self, i, ident)
 end
 
+local function is_empty_expression(expr)
+   return not expr or (expr[2][1] == "suffixed_expression" and not expr[2][2])
+end
+
 mt.expression_list = {}
 function mt.expression_list.init(exprs)
+   if is_empty_expression(exprs[1]) then
+      exprs = {}
+   end
    return { "expression_list", unpack(exprs) }
 end
 function mt.expression_list:remove(i)
@@ -694,6 +787,12 @@ function mt.expression_list:remove(i)
 end
 function mt.expression_list:at(i)
    return self[i*2]
+end
+function mt.expression_list:count()
+   if #self == 1 then
+      return 0
+   end
+   return math.floor(#self / 2)
 end
 function mt.expression_list:insert(expr, i)
    local Codegen = require("yalf.parser.codegen")
@@ -770,6 +869,12 @@ function mt.constructor_expression:clear()
 end
 function mt.constructor_expression:at(i)
    return self[i*2+1]
+end
+function mt.constructor_expression:count(i)
+   if #self == 3 then
+      return 0
+   end
+   return math.floor((#self-2) / 2)
 end
 function mt.constructor_expression:insert(kv_pair, i)
    if kv_pair:type() ~= "key_value_pair" and kv_pair:type() ~= "expression" then
@@ -933,6 +1038,34 @@ end
 function mt.leaf:raw_value()
    return self.value
 end
+function mt.leaf:was_split()
+   for _, v in ipairs(self._prefix) do
+      if v.Data == "\n" then
+         return true
+      end
+   end
+   return false
+end
+function mt.leaf:prefix_offsets()
+   local line = 0
+   local column = 0
+
+   for _, v in ipairs(self._prefix) do
+      if v.Data == "\n" then
+         line = line + 1
+         column = 0
+      else
+         column = column + 1
+      end
+   end
+   return line, column
+end
+function mt.leaf:left_boundary()
+   return self.column
+end
+function mt.leaf:right_boundary()
+   return self.column + #self.value
+end
 
 for k, v in pairs(mt) do
    NodeTypes:mknode(k, v)
@@ -941,6 +1074,9 @@ end
 NodeTypes.mt = mt
 
 function NodeTypes.on_hotload(old, new)
+   if not old.mt then
+      error("failed")
+   end
    for k, v in pairs(old.mt) do
       utils.replace_table(v, new.mt[k])
    end

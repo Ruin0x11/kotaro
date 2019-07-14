@@ -23,9 +23,11 @@ function file2src(file)
 end
 
 function src2cst(code)
+   sw:measure()
+
    local cst_parser = require("yalf.parser.cst_parser")
    local a, new = cst_parser(code):parse()
-   assert(a)
+   assert(a, new)
 
    sw:p("parse")
 
@@ -77,7 +79,6 @@ function refactor_file(file, refs)
 
    local refs = refs or require("test_refactoring")
    visitor.visit(visitors.refactoring_visitor:new(refs), cst)
-   visitor.visit(visitors.refactoring_exec_visitor:new(refs), cst)
 
    sw:p("refactor")
 
@@ -123,6 +124,23 @@ function move_to_inner_table:execute(node)
          target:primary_expression():modify_index(k, val)
       end
    end
+end
+
+function format_file(file)
+   local cst = file2cst(file)
+
+   sw:measure()
+
+   local visitors = require("yalf.visitor.visitors")
+   local spv = require("yalf.visitor.split_penalty_visitor")
+   local rv = require("yalf.visitor.reformatting_visitor")
+   visitor.visit(visitors.parenting_visitor:new(), cst)
+   visitor.visit(spv:new(), cst)
+   visitor.visit(rv:new(), cst)
+
+   sw:p("format")
+
+   return cst
 end
 
 -- =refactor_file("/home/ruin/build/elonafoobar/runtime/mod/core/data/chara.lua", { move_to_inner_table:new({"image"}, "_copy") })

@@ -657,7 +657,7 @@ function cst_parser:parse_local()
       local st, assign = self:parse_assignment(suff, "local")
       if not st then return st, assign end
 
-      return true, NodeTypes.local_assignment(l_local, assign)
+      return true, NodeTypes.assignment_statement__local(l_local, assign)
    elseif self.lexer:tokenIsKeyword("function") then
       local st, func = self:parse_function_declaration()
       if not st then return st, func end
@@ -773,6 +773,8 @@ function cst_parser:parse_assignment(suffixed, mode)
       if not st then return false, rhs_part end
 
       rhs[#rhs+1] = rhs_part
+
+      l_comma = self.lexer:consumeSymbol(",")
    end
 
    local rhs_node = NodeTypes.expression_list(rhs)
@@ -828,12 +830,13 @@ function cst_parser:parse_statement()
       st, stmt = self:parse_assignment_or_call()
    end
 
+   local l_semicolon
+
    if self.lexer:tokenIsSymbol(";") then
-      local l_semicolon = self:consumeToken()
-      stmt = NodeTypes.statement_with_semicolon(stmt, l_semicolon)
+      l_semicolon = self:consumeToken()
    end
 
-   return st, stmt
+   return st, stmt, l_semicolon
 end
 
 local block_end_kwords = utils.set{"end", "else", "elseif", "until"}
@@ -842,10 +845,14 @@ function cst_parser:parse_statement_list()
    local statements = {}
 
    while not (block_end_kwords[self.lexer:peekToken().value] or self.lexer:isEof()) do
-      local st, statement = self:parse_statement()
+      local st, statement, l_semicolon = self:parse_statement()
       if not st then return false, statement end
       assert(statement)
       statements[#statements+1] = statement
+
+      if l_semicolon then
+         statements[#statements+1] = l_semicolon
+      end
    end
 
    return true, NodeTypes.statement_list(statements)

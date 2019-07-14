@@ -106,9 +106,8 @@ end
 
 function refactoring_visitor:visit_leaf(node)
    for _, v in ipairs(self.refactorings) do
-      node.refactorings = node.refactorings or {}
       if v:applies_to(node) then
-         node.refactorings[v] = true
+         v:execute(node)
       end
    end
 end
@@ -119,41 +118,7 @@ function refactoring_visitor:visit_node(node, visit)
    end
 
    for _, v in ipairs(self.refactorings) do
-      node.refactorings = node.refactorings or {}
       if v:applies_to(node) then
-         node.refactorings[v] = true
-      end
-   end
-
-   if not self.is_preorder then
-      visit(self, node, visit)
-   end
-end
-
-local refactoring_exec_visitor = {}
-
-function refactoring_exec_visitor:new(refactorings)
-   local o = setmetatable({}, { __index = refactoring_exec_visitor })
-   o.refactorings = refactorings
-   self.is_preorder = self.order == "preorder"
-   return o
-end
-
-function refactoring_exec_visitor:visit_leaf(node)
-   for _, v in ipairs(self.refactorings) do
-      if node.refactorings and node.refactorings[v] then
-         v:execute(node)
-      end
-   end
-end
-
-function refactoring_exec_visitor:visit_node(node, visit)
-   if self.is_preorder then
-      visit(self, node, visit)
-   end
-
-   for _, v in ipairs(self.refactorings) do
-      if node.refactorings and node.refactorings[v] then
          v:execute(node)
       end
    end
@@ -175,9 +140,11 @@ end
 
 function parenting_visitor:visit_node(node, visit)
    node.parent = self.current_parent
-   self.current_parent = node
 
+   local before = self.current_parent
+   self.current_parent = node
    visit(self, node, visit)
+   self.current_parent = before
 end
 
 local line_numbering_visitor = {}
@@ -237,7 +204,6 @@ return {
    parenting_visitor = parenting_visitor,
    line_numbering_visitor = line_numbering_visitor,
    refactoring_visitor = refactoring_visitor,
-   refactoring_exec_visitor = refactoring_exec_visitor,
    code_convert_visitor = code_convert_visitor,
    on_hotload = function(old, new)
       for k, v in pairs(old) do
