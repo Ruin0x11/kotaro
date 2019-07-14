@@ -689,9 +689,6 @@ mt.expression_list = {}
 function mt.expression_list.init(exprs)
    return { "expression_list", unpack(exprs) }
 end
-function mt.expression_list:children()
-   return all_but_first(self)
-end
 function mt.expression_list:remove(i)
    return remove_in_comma_list(self, i)
 end

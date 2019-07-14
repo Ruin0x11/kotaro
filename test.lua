@@ -6,6 +6,8 @@ visitors = require("yalf.visitor.visitors")
 visitor = visitors.visitor
 tree_utils = require("yalf.parser.tree_utils")
 
+local sw = stopwatch()
+
 function file2src(file)
    file = file or "test_refactoring.lua"
 
@@ -21,8 +23,6 @@ function file2src(file)
 end
 
 function src2cst(code)
-   local sw = stopwatch()
-
    local cst_parser = require("yalf.parser.cst_parser")
    local a, new = cst_parser(code):parse()
    assert(a)
@@ -73,7 +73,13 @@ end
 function refactor_file(file, refs)
    local cst = file2cst(file)
 
-   visitor.visit(visitors.refactoring_visitor:new(refs or require("test_refactoring")), cst)
+   sw:measure()
+
+   local refs = refs or require("test_refactoring")
+   visitor.visit(visitors.refactoring_visitor:new(refs), cst)
+   visitor.visit(visitors.refactoring_exec_visitor:new(refs), cst)
+
+   sw:p("refactor")
 
    return cst
 end
@@ -117,4 +123,24 @@ function move_to_inner_table:execute(node)
          target:primary_expression():modify_index(k, val)
       end
    end
+end
+
+-- =refactor_file("/home/ruin/build/elonafoobar/runtime/mod/core/data/chara.lua", { move_to_inner_table:new({"image"}, "_copy") })
+
+local move_file = {}
+
+local function is_require(node, path)
+   return node:type() == "suffixed_expression"
+      and node:is_function_call()
+      and node:name() == "require"
+      and node:arguments():count() > 0
+      and node:arguments():at(1):raw_value() == path
+end
+
+function move_file:new(from, to)
+   return setmetatable({from, to}, {__index = move_file})
+end
+function move_file:applies_to(node)
+end
+function move_file:execute(node)
 end

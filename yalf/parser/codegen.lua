@@ -7,7 +7,6 @@ local Codegen = {}
 function Codegen.make_prefix(s)
    local leading = {}
    for i=1,#s do
-
       table.insert(leading, { Type = "Whitespace", Line = nil, Char = nil, Data = string.sub(s, i, i)})
    end
    return leading
