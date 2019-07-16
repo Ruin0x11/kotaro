@@ -12,9 +12,9 @@ function reformatting_visitor:new()
    return setmetatable({ indent = 0, line = 1, column = 0, first = true }, { __index = reformatting_visitor })
 end
 function reformatting_visitor:visit_leaf(node)
-   local do_split = not node.split_penalty or node.split_penalty < 1000 * 1000
+   local do_split = node.must_split or not node.split_penalty or node.split_penalty < 1000 * 1000
 
-   if do_split then
+   if do_split and false then
       split_and_indent(node, self.indent)
    else
       local spaces = node.spaces_before or 1

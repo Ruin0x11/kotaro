@@ -12,7 +12,7 @@ function file2src(file)
    file = file or "test_refactoring.lua"
 
    local inf = io.open(file, 'r')
-   if not inf then --comment
+   if not inf then
       print("Failed to open `"..file.."` for reading")
       return
    end
@@ -20,6 +20,14 @@ function file2src(file)
    inf:close()
 
    return s
+end
+
+function cst2file(cst, file)
+   assert(file)
+
+   local inf = io.open(file, 'w')
+   visitor.visit(visitors.code_convert_visitor:new(inf), cst)
+   inf:close()
 end
 
 function src2cst(code)
@@ -73,7 +81,10 @@ function dump(cst)
 end
 
 function refactor_file(file, refs)
-   local cst = file2cst(file)
+   local cst = file
+   if type(file) == "string" then
+      cst = file2cst(file)
+   end
 
    sw:measure()
 
@@ -116,7 +127,7 @@ function move_to_inner_table:execute(node)
 
       if val then
          if target == nil then
-            target = node:modify_index(self.target, Codegen.gen_constructor_expression({}))
+            target = node:modify_index(self.target, Codegen.gen_expression_from_value({}))
          end
 
          node:modify_index(k, nil)
@@ -161,4 +172,48 @@ end
 function move_file:applies_to(node)
 end
 function move_file:execute(node)
+end
+
+
+effective_range = {
+   [788] = {60, 90, 100, 100, 80, 60, 20, 20, 20, 20},
+   [758] = {100, 90, 70, 50, 20, 20, 20, 20, 20, 20},
+   [725] = {60, 100, 70, 20, 20, 20, 20, 20, 20, 20},
+   [718] = {50, 100, 50, 20, 20, 20, 20, 20, 20, 20},
+   [716] = {60, 100, 70, 20, 20, 20, 20, 20, 20, 20},
+   [714] = {80, 100, 90, 80, 60, 20, 20, 20, 20, 20},
+   [713] = {60, 100, 70, 20, 20, 20, 20, 20, 20, 20},
+   [674] = {100, 40, 20, 20, 20, 20, 20, 20, 20, 20},
+   [673] = {50, 90, 100, 90, 80, 80, 70, 60, 50, 20},
+   [633] = {50, 100, 50, 20, 20, 20, 20, 20, 20, 20},
+   [514] = {100, 100, 100, 100, 100, 100, 100, 50, 20, 20},
+   [512] = {100, 100, 100, 100, 100, 100, 100, 20, 20, 20},
+   [496] = {100, 60, 20, 20, 20, 20, 20, 20, 20, 20},
+   [482] = {80, 100, 90, 80, 70, 60, 50, 20, 20, 20},
+   [231] = {80, 100, 100, 90, 80, 70, 20, 20, 20, 20},
+   [230] = {70, 100, 100, 80, 60, 20, 20, 20, 20, 20},
+   [210] = {60, 100, 70, 20, 20, 20, 20, 20, 20, 20},
+   [207] = {50, 90, 100, 90, 80, 80, 70, 60, 50, 20},
+   [60] = {100, 90, 70, 50, 20, 20, 20, 20, 20, 20},
+   [58] = {50, 90, 100, 90, 80, 80, 70, 60, 50, 20},
+}
+
+function effective_range:applies_to(node)
+   if node:type() ~= "constructor_expression" then
+      return false
+   end
+
+   local target = node:index("elona_id")
+   if not target or target:type() ~= "expression" or not target:to_value() then
+      return false
+   end
+
+   return self[target:to_value()]
+end
+function effective_range:execute(node)
+   local id = node:index("elona_id"):to_value()
+   local tbl = self[id]
+   local inspect = require("inspect")
+   local expr = Codegen.gen_expression(inspect(tbl))
+   node:modify_index("effective_range", expr)
 end

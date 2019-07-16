@@ -178,7 +178,7 @@ end
 local code_convert_visitor = {}
 
 function code_convert_visitor:new(stream, params)
-   local o = setmetatable({ params = params, first_prefix = false }, { __index = code_convert_visitor })
+   local o = setmetatable({ params = params or {}, first_prefix = false }, { __index = code_convert_visitor })
    o.stream = stream or { stream = io, write = function(t, ...) t.stream.write(...) end }
    return o
 end

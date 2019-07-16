@@ -496,6 +496,20 @@ function mt.expression:primary_expression()
    end
    return self[2]
 end
+function mt.expression:to_value()
+   local leaf = self[2]
+   local leaf_type = leaf.leaf_type
+
+   if leaf_type == "Number" then
+      return tonumber(leaf.value)
+   elseif leaf_type == "String" then
+      return leaf.value:sub(2,#leaf.value-1)
+   elseif leaf_type == "Boolean" then
+      return leaf.value == "true"
+   end
+
+   return nil
+end
 
 mt.member_expression = {}
 function mt.member_expression.init(l_dot_or_colon, id)

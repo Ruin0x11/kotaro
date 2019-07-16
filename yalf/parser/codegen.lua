@@ -75,6 +75,10 @@ function Codegen.gen_expression_from_value(value)
       end
    elseif _type == "boolean" then
       ops = { NodeTypes.leaf("Keyword", tostring(value)) }
+   elseif _type == "table" then
+      -- HACK
+      local inspect = require("inspect")
+      return Codegen.gen_expression(inspect(value))
    end
 
    if #ops == 0 then
@@ -195,10 +199,6 @@ function Codegen.gen_key_value_pair(key, value)
    value_expr:set_prefix(" ")
 
    return NodeTypes.key_value_pair(key_expr, Codegen.gen_symbol("="):set_prefix(" "), value_expr)
-end
-
-function Codegen.gen_constructor_expression(tbl)
-   return NodeTypes.expression({NodeTypes.constructor_expression(Codegen.gen_symbol("{"), tbl, Codegen.gen_symbol("}"))})
 end
 
 return Codegen

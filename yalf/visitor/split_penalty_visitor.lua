@@ -34,6 +34,14 @@ local function set_unbreakable(node, spaces_before)
    end
 end
 
+-- Marks the tokens in [start, finish] as belonging to a block. If
+-- anything gets indented within the block, the indent calculation
+-- will also indent all the tokens in [start+1, finish].
+local function mark_block(node, start, finish)
+   node.blocks = node.blocks or {}
+   table.insert(node.blocks, { start, finish })
+end
+
 -- marks the nodes in [start, finish] as dependent on the node at
 -- `start` for indent.
 local function add_trailer(node, start, finish)
@@ -54,6 +62,9 @@ local function add_trailer(node, start, finish)
       node[i].trailer_start = start_node
       node[i].trailer_head = head
    end
+
+   -- TODO: if anything in the trailer needs indenting, all nodes in
+   -- the trailer should be indented retroactively.
 end
 
 function split_penalty_visitor:new()
@@ -165,6 +176,14 @@ function split_penalty_visitor:visit_expression_list(node, visit)
       set_unbreakable(node[i], 0) -- `,`
    end
    visit(self, node, visit)
+end
+
+function split_penalty_visitor:visit_do_block(node, visit)
+   self.is_block = true
+
+   visit(self, node, visit)
+
+   mark_block(node, 2, 4)
 end
 
 function split_penalty_visitor:visit_numeric_for_range(node, visit)
