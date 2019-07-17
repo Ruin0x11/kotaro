@@ -1,5 +1,5 @@
-local visitors = require("yalf.visitor.visitors")
-local visitor = visitors.visitor
+local visitor = require("yalf.visitor")
+local code_convert_visitor = require("yalf.visitor.code_convert_visitor")
 local tree_utils = require("yalf.parser.tree_utils")
 local utils = require("yalf.utils")
 
@@ -20,7 +20,29 @@ local mt = {}
 local base_mt = {}
 
 function base_mt:clone()
-   return utils.deepcopy(self)
+   local tbl = {}
+   for k, v in pairs(self) do
+      if type(v) == "table" then
+         -- avoid deepcopying fields like "parent", "left" or "right".
+         -- only deepcopy if the table is not itself an AST node and
+         -- is in the array part of this node.
+         local is_child = type(k) == "number"
+         local is_ast_node = v.clone ~= nil
+
+         if is_child and is_ast_node then
+            tbl[k] = v:clone()
+         elseif not is_ast_node then
+            tbl[k] = utils.deepcopy(v)
+         else
+            tbl[k] = v
+         end
+      else
+         tbl[k] = v
+      end
+   end
+
+   setmetatable(tbl, getmetatable(self))
+   return tbl
 end
 
 function base_mt:children()
@@ -108,7 +130,14 @@ function base_mt:eq_by_value(other)
    return true
 end
 
+-- Replaces this node with another one. This will replace all data in
+-- the array part of the table and preserve the metadata in the map
+-- part, like the node's parent or left/right sibling.
 function base_mt:replace_with(other, params)
+   if self == other then
+      return
+   end
+
    params = params or {}
 
    local prefix
@@ -116,11 +145,19 @@ function base_mt:replace_with(other, params)
       prefix = self:prefix()
    end
 
-   utils.replace_table(self, other)
+   -- iterate array part, preseve metadata in map part
+   for k, _ in ipairs(self) do
+      self[k] = nil
+   end
+   for k, v in ipairs(other) do
+      self[k] = v
+   end
 
    if prefix then
       self:set_prefix(prefix)
    end
+
+   setmetatable(self, getmetatable(other))
 
    return self
 end
@@ -236,7 +273,7 @@ function base_mt:as_code(params)
          self.stream = self.stream .. s
       end
    }
-   local v = visitors.code_convert_visitor:new(string_io, params)
+   local v = code_convert_visitor:new(string_io, params)
    visitor.visit(v, self)
    return string_io.stream
 end
@@ -247,6 +284,8 @@ function NodeTypes:mknode(name, meta)
          meta[func_name] = func
       end
    end
+
+   meta.__name = name
 
    self[name] = function(...)
       return setmetatable(meta.init(...),
@@ -466,6 +505,9 @@ mt.parenthesized_expression = {}
 function mt.parenthesized_expression.init(l_lparen, expr, l_rparen)
    return { "parenthesized_expression", l_lparen, expr, l_rparen }
 end
+function mt.parenthesized_expression:children()
+   return { self[3] }
+end
 
 mt.statement_with_semicolon = {}
 function mt.statement_with_semicolon.init(stmt, semicolon)
@@ -476,19 +518,25 @@ mt.expression = {}
 function mt.expression.init(ops_and_numbers)
    return { "expression", unpack(ops_and_numbers) }
 end
-function mt.expression:set(expr)
-   local Codegen = require("yalf.parser.codegen")
-   if type(expr) == "string" then
-      expr = Codegen.gen_expression(expr)
+function mt.expression:is_unary()
+   return #self == 3
+end
+function mt.expression:is_binary()
+   return #self == 4
+end
+function mt.expression:lhs()
+   if self:is_unary() then
+      return nil
    end
 
-   for i=2,#self do
-      self[i] = nil
+   return self[2]
+end
+function mt.expression:rhs()
+   if self:is_unary() then
+      return self[3]
    end
 
-   for i=2,#expr do
-      self[i] = expr[i]
-   end
+   return self[4]
 end
 function mt.expression:primary_expression()
    if self[2]:type() == "suffixed_expression" then
@@ -786,7 +834,7 @@ function mt.ident_list:insert(ident, i)
 end
 
 local function is_empty_expression(expr)
-   return not expr or (expr[2][1] == "suffixed_expression" and not expr[2][2])
+   return false
 end
 
 mt.expression_list = {}
@@ -1079,6 +1127,19 @@ function mt.leaf:left_boundary()
 end
 function mt.leaf:right_boundary()
    return self.column + #self.value
+end
+function mt.leaf:clone()
+   local tbl = {}
+   for k, v in pairs(self) do
+      if type(v) == "table" and not v.clone then
+         tbl[k] = utils.deepcopy(v)
+      else
+         tbl[k] = v
+      end
+   end
+
+   setmetatable(tbl, getmetatable(self))
+   return tbl
 end
 
 for k, v in pairs(mt) do

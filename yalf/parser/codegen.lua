@@ -201,4 +201,14 @@ function Codegen.gen_key_value_pair(key, value)
    return NodeTypes.key_value_pair(key_expr, Codegen.gen_symbol("="):set_prefix(" "), value_expr)
 end
 
+function Codegen.gen_parenthesized_expression(expr)
+   local l_lparen = Codegen.gen_symbol("(")
+   local l_rparen = Codegen.gen_symbol(")")
+
+   l_lparen:set_prefix(" ")
+   expr:set_prefix("")
+
+   return NodeTypes.parenthesized_expression(l_lparen, expr, l_rparen)
+end
+
 return Codegen

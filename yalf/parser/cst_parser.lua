@@ -106,7 +106,7 @@ function cst_parser:parse_parenthesized_expression()
    return true, NodeTypes.parenthesized_expression(l_lparen, expr, l_rparen)
 end
 
-function cst_parser:parse_primary_expression()
+function cst_parser:parse_suffixed_primary_expression()
    local st, expr
 
    if self.lexer:tokenIsSymbol("(") then
@@ -122,8 +122,12 @@ function cst_parser:parse_primary_expression()
 end
 
 function cst_parser:parse_suffixed_expression(mode)
-   local st, primary = self:parse_primary_expression()
-   if not st then return st, primary end
+   if not self.lexer:tokenIs("Ident") then
+      return true, NodeTypes.suffixed_expression({})
+   end
+
+   local primary = self.lexer:consumeToken()
+   assert(primary.leaf_type == "Ident")
 
    local expr
    local exprs = { primary }
@@ -254,16 +258,18 @@ function cst_parser:parse_constructor_entry()
       if not st then return st, value_or_kv_pair end
       result = value_or_kv_pair
    else
-         local l_rbracket = self.lexer:consumeSymbol("}")
-         if l_rbracket then
-            return true, l_rbracket
-         else
-            local st, value = self:parse_expression()
-            if not st then return false, self:generate_error("value expected") end
+      local l_rbracket = self.lexer:consumeSymbol("}")
+      if l_rbracket then
+         return true, l_rbracket
+      else
+         local st, value = self:parse_expression()
+         if not st then return false, self:generate_error("value expected") end
 
-            return true, value
-         end
+         return true, value
+      end
    end
+
+   assert(result)
 
    return true, result
 end
@@ -351,14 +357,15 @@ function cst_parser:parse_simple_expression()
 end
 
 local unops = utils.set{'-', 'not', '#'}
+local unopprio = 8
 local priority = {
    ['+'] = {6,6};
    ['-'] = {6,6};
    ['%'] = {7,7};
    ['/'] = {7,7};
    ['*'] = {7,7};
-   ['^'] = {10,9};
-   ['..'] = {5,4};
+   ['^'] = {10,9}; -- right-associative
+   ['..'] = {5,4}; -- right-associative
    ['=='] = {3,3};
    ['<'] = {3,3};
    ['<='] = {3,3};
@@ -369,37 +376,85 @@ local priority = {
    ['or'] = {1,1};
 }
 
-function cst_parser:parse_expression()
-   local st, exp
+function cst_parser:parse_primary_expression()
+   local st, expr
 
-   local ops = {}
+   if self.lexer:tokenIsSymbol("(") then
+      st, expr = self:parse_parenthesized_expression()
+      if not st then return st, expr end
+      return true, expr
+   end
 
    if unops[self.lexer:peekToken().value] then
+      local ops = {}
+
       local op = self.lexer:consumeToken()
-      ops[#ops+1] = op
+      ops[1] = op
 
-      st, exp = self:parse_expression()
-      if not st then return st, exp end
+      local st, exp = self:parse_primary_expression()
+      if not exp then return st, exp end
 
-      ops[#ops+1] = exp
-   else
-      st, exp = self:parse_simple_expression()
-      if not st then return st, exp end
-      ops[#ops+1] = exp
+      ops[2] = exp
+
+      return true, NodeTypes.expression(ops)
    end
 
-   while priority[self.lexer:peekToken().value] do
-      local op = self.lexer:consumeToken()
+   return self:parse_simple_expression()
+end
 
-      ops[#ops+1] = op
+-- Implements the precedence climbing method.
+-- https://en.wikipedia.org/wiki/Operator-precedence_parser#Precedence_climbing_method
+function cst_parser:parse_expression_1(lhs, min_priority)
+   local st, exp
 
-      st, exp = self:parse_expression()
-      if not st then return st, exp end
+   local lookahead = self.lexer:peekToken().value
 
-      ops[#ops+1] = exp
+   local continue_lhs = function(tok)
+      local prio = priority[tok]
+      return prio and prio[1] >= min_priority
    end
 
-   return true, NodeTypes.expression(ops)
+   local continue_rhs = function(tok, first_prio)
+      local prio = priority[tok]
+      return prio and prio[2] > first_prio[1]
+   end
+
+   while continue_lhs(lookahead) do
+      local first_op = self.lexer:consumeToken()
+      local first_op_prio = priority[first_op.value]
+      assert(first_op_prio)
+
+      local st, rhs = self:parse_primary_expression()
+      if not st then return st, rhs end
+
+      lookahead = self.lexer:peekToken().value
+
+      while continue_rhs(lookahead, first_op_prio) do
+         local second_op_prio = priority[lookahead]
+         assert(second_op_prio)
+         st, rhs = self:parse_expression_1(rhs, second_op_prio[1])
+         if not st then return st, rhs end
+         lookahead = self.lexer:peekToken().value
+      end
+
+      lhs = NodeTypes.expression({lhs, first_op, rhs})
+   end
+
+   return true, lhs
+end
+
+function cst_parser:parse_expression()
+   local st, primary = self:parse_primary_expression()
+   if not st then return st, primary end
+
+   local st, lhs = self:parse_expression_1(primary, 0)
+   if not st then return st, lhs end
+
+   if lhs[1] ~= "expression" then
+      lhs = NodeTypes.expression({lhs})
+   end
+
+   return true, lhs
 end
 
 --
@@ -785,6 +840,7 @@ end
 function cst_parser:parse_assignment_or_call()
    local st, suffixed = self:parse_suffixed_expression()
    if not st then return st, suffixed end
+   assert(#suffixed > 1)
 
    local stmt = suffixed
    if self.lexer:tokenIsSymbol(",") or self.lexer:tokenIsSymbol("=") then

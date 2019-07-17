@@ -16,6 +16,17 @@ function utils.copy(t)
    return n
 end
 
+-- Returns an IO stream suitable for use with io.write() which writes
+-- its output to a string.
+function utils.string_io()
+   return {
+      stream = "",
+      write = function(self, s)
+         self.stream = self.stream .. s
+      end
+   }
+end
+
 -- from penlight
 local function cycle_aware_copy(t, cache)
     if type(t) ~= 'table' then return t end

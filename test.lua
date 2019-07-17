@@ -1,10 +1,11 @@
 hotload = require("hotload")
 hotload.hook_global_require()
 
-stopwatch = require("stopwatch")
-visitors = require("yalf.visitor.visitors")
-visitor = visitors.visitor
-tree_utils = require("yalf.parser.tree_utils")
+local stopwatch = require("stopwatch")
+local visitor = require("yalf.visitor")
+local code_convert_visitor = require("yalf.visitor.code_convert_visitor")
+local refactoring_visitor = require("yalf.visitor.refactoring_visitor")
+local tree_utils = require("yalf.parser.tree_utils")
 
 local sw = stopwatch()
 
@@ -26,7 +27,7 @@ function cst2file(cst, file)
    assert(file)
 
    local inf = io.open(file, 'w')
-   visitor.visit(visitors.code_convert_visitor:new(inf), cst)
+   visitor.visit(code_convert_visitor:new(inf), cst)
    inf:close()
 end
 
@@ -49,7 +50,7 @@ function cst2src(cst)
          self.stream = self.stream .. s
       end
    }
-   local v = visitors.code_convert_visitor:new(string_io)
+   local v = code_convert_visitor:new(string_io)
    visitor.visit(v, cst)
    return string_io.stream
 end
@@ -89,7 +90,7 @@ function refactor_file(file, refs)
    sw:measure()
 
    local refs = refs or require("test_refactoring")
-   visitor.visit(visitors.refactoring_visitor:new(refs), cst)
+   visitor.visit(refactoring_visitor:new(refs), cst)
 
    sw:p("refactor")
 
@@ -98,7 +99,7 @@ end
 
 Codegen = require("yalf.parser.codegen")
 inspect = require("inspect")
-cst = file2cst()
+-- cst = file2cst("test9.lua")
 
 move_to_inner_table = { order = "preorder" }
 function move_to_inner_table:new(keys, target)
@@ -142,10 +143,10 @@ function format_file(file)
 
    sw:measure()
 
-   local visitors = require("yalf.visitor.visitors")
+   local pv = require("yalf.visitor.parenting_visitor")
    local spv = require("yalf.visitor.split_penalty_visitor")
    local rv = require("yalf.visitor.reformatting_visitor")
-   visitor.visit(visitors.parenting_visitor:new(), cst)
+   visitor.visit(pv:new(), cst)
    visitor.visit(spv:new(), cst)
    visitor.visit(rv:new(), cst)
 
@@ -175,30 +176,59 @@ function move_file:execute(node)
 end
 
 
-effective_range = {
-   [788] = {60, 90, 100, 100, 80, 60, 20, 20, 20, 20},
-   [758] = {100, 90, 70, 50, 20, 20, 20, 20, 20, 20},
-   [725] = {60, 100, 70, 20, 20, 20, 20, 20, 20, 20},
-   [718] = {50, 100, 50, 20, 20, 20, 20, 20, 20, 20},
-   [716] = {60, 100, 70, 20, 20, 20, 20, 20, 20, 20},
-   [714] = {80, 100, 90, 80, 60, 20, 20, 20, 20, 20},
-   [713] = {60, 100, 70, 20, 20, 20, 20, 20, 20, 20},
-   [674] = {100, 40, 20, 20, 20, 20, 20, 20, 20, 20},
-   [673] = {50, 90, 100, 90, 80, 80, 70, 60, 50, 20},
-   [633] = {50, 100, 50, 20, 20, 20, 20, 20, 20, 20},
-   [514] = {100, 100, 100, 100, 100, 100, 100, 50, 20, 20},
-   [512] = {100, 100, 100, 100, 100, 100, 100, 20, 20, 20},
-   [496] = {100, 60, 20, 20, 20, 20, 20, 20, 20, 20},
-   [482] = {80, 100, 90, 80, 70, 60, 50, 20, 20, 20},
-   [231] = {80, 100, 100, 90, 80, 70, 20, 20, 20, 20},
-   [230] = {70, 100, 100, 80, 60, 20, 20, 20, 20, 20},
-   [210] = {60, 100, 70, 20, 20, 20, 20, 20, 20, 20},
-   [207] = {50, 90, 100, 90, 80, 80, 70, 60, 50, 20},
-   [60] = {100, 90, 70, 50, 20, 20, 20, 20, 20, 20},
-   [58] = {50, 90, 100, 90, 80, 80, 70, 60, 50, 20},
+thing = {
+    [788] = 15,
+    [781] = 40,
+    [759] = 100,
+    [758] = 35,
+    [741] = 20,
+    [739] = 65,
+    [735] = 5,
+    [725] = 0,
+    [718] = 5,
+    [716] = 50,
+    [714] = 0,
+    [713] = 15,
+    [678] = 10,
+    [677] = 30,
+    [675] = 15,
+    [674] = 30,
+    [673] = 20,
+    [633] = 5,
+    [514] = 5,
+    [512] = 5,
+    [496] = 30,
+    [482] = 25,
+    [359] = 40,
+    [266] = 5,
+    [235] = 30,
+    [231] = 0,
+    [230] = 15,
+    [228] = 25,
+    [225] = 10,
+    [224] = 20,
+    [213] = 25,
+    [211] = 5,
+    [210] = 5,
+    [207] = 20,
+    [206] = 20,
+    [73] = 20,
+    [64] = 15,
+    [63] = 15,
+    [60] = 10,
+    [58] = 20,
+    [57] = 25,
+    [56] = 10,
+    [2] = 10,
+    [1] = 5,
 }
 
-function effective_range:applies_to(node)
+add_field_by_legacy_id = {}
+
+function add_field_by_legacy_id:new(field, items)
+   return setmetatable({field = field, items = items}, {__index = add_field_by_legacy_id})
+end
+function add_field_by_legacy_id:applies_to(node)
    if node:type() ~= "constructor_expression" then
       return false
    end
@@ -208,12 +238,36 @@ function effective_range:applies_to(node)
       return false
    end
 
-   return self[target:to_value()]
+   return self.items[target:to_value()] ~= nil
 end
-function effective_range:execute(node)
+function add_field_by_legacy_id:execute(node)
    local id = node:index("elona_id"):to_value()
-   local tbl = self[id]
+   local tbl = self.items[id]
    local inspect = require("inspect")
    local expr = Codegen.gen_expression(inspect(tbl))
-   node:modify_index("effective_range", expr)
+   node:modify_index(self.field, expr)
+end
+
+modify_table_index = {}
+
+function modify_table_index:new(field, cb)
+   return setmetatable({field = field, cb = cb}, {__index = modify_table_index})
+end
+function modify_table_index:applies_to(node)
+   if node:type() ~= "constructor_expression" then
+      return false
+   end
+
+   local target = node:index(self.field)
+   if not target or target:type() ~= "expression" or not target:to_value() then
+      return false
+   end
+
+   return true
+end
+function modify_table_index:execute(node)
+   local id = node:index(self.field):to_value()
+   local val = self.cb(id)
+   local expr = Codegen.gen_expression_from_value(val)
+   node:modify_index(self.field, expr)
 end
