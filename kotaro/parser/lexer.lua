@@ -1,6 +1,6 @@
 local class = require("pl.class")
-local utils = require("yalf.utils")
-local NodeTypes = require("yalf.parser.node_types")
+local utils = require("kotaro.utils")
+local NodeTypes = require("kotaro.parser.node_types")
 
 local WhiteChars = utils.set{' ', '\n', '\t', '\r'}
 local EscapeLookup = {['\r'] = '\\r', ['\n'] = '\\n', ['\t'] = '\\t', ['"'] = '\\"', ["'"] = "\\'"}

@@ -1,5 +1,5 @@
-local visitor = require("yalf.visitor")
-local print_visitor = require("yalf.visitor.print_visitor")
+local visitor = require("kotaro.visitor")
+local print_visitor = require("kotaro.visitor.print_visitor")
 local tree_utils = {}
 
 function tree_utils.dump(node, stream)

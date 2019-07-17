@@ -1,6 +1,6 @@
-local NodeTypes = require("yalf.parser.node_types")
-local cst_parser = require("yalf.parser.cst_parser")
-local lexer = require("yalf.parser.lexer")
+local NodeTypes = require("kotaro.parser.node_types")
+local cst_parser = require("kotaro.parser.cst_parser")
+local lexer = require("kotaro.parser.lexer")
 
 local Codegen = {}
 
@@ -41,7 +41,7 @@ function Codegen.gen_string(value)
    return NodeTypes.leaf("String", string.format("\"%s\"", value), Codegen.make_prefix(""), -1, -1)
 end
 
-function Codegen.convert_ident_to_expression(ident)
+function Codegen.convert_leaf_to_expression(ident)
    if type(ident) == "string" then
       ident = Codegen.gen_ident(ident)
    end
@@ -49,16 +49,29 @@ function Codegen.convert_ident_to_expression(ident)
    return NodeTypes.expression({NodeTypes.suffixed_expression({ident})})
 end
 
-function Codegen.gen_expression(expr)
-   local a, new = cst_parser(expr):parse_expression()
+function Codegen.gen_expression_from_code(code)
+   local a, new = cst_parser(code):parse_expression()
    assert(a, new)
 
    return new
 end
 
-function Codegen.gen_expression_from_value(value)
+function Codegen.gen_expression(value)
    local ops = {}
    local _type = type(value)
+
+   if _type == "table" then
+      if value[1] == "expression" then
+         return value
+      elseif value.leaf_type == "Ident" then
+         return Codegen.convert_leaf_to_expression(value)
+      else
+         -- HACK
+         local inspect = require("inspect")
+         return Codegen.gen_expression_from_code(inspect(value))
+      end
+   end
+
    if _type == "number" then
       local leaf = NodeTypes.leaf("Number", tostring(value))
       if value < 0 then
@@ -67,20 +80,16 @@ function Codegen.gen_expression_from_value(value)
          ops = { leaf }
       end
    elseif _type == "string" then
-      if is_valid_lua_ident(value) then
       -- this handles the case of idents ("string") and strings ("\"string\"")
-         ops = { NodeTypes.suffixed_expression({Codegen.lex_one_token(value)}) }
-      else
-         ops = { Codegen.gen_string(value) }
+      local ok, tok = pcall(function() return Codegen.lex_one_token(value) end)
+      if not ok then
+         error(string.format("source string '%s' does not form a valid Lua string or identifier. Error message:\n    %s", value, tok))
       end
+
+      ops = { NodeTypes.suffixed_expression({tok}) }
    elseif _type == "boolean" then
       ops = { NodeTypes.leaf("Keyword", tostring(value)) }
-   elseif _type == "table" then
-      -- HACK
-      local inspect = require("inspect")
-      return Codegen.gen_expression(inspect(value))
    end
-
    if #ops == 0 then
       return nil
    end
@@ -171,31 +180,13 @@ function Codegen.gen_key_value_pair(key, value)
    local key_expr
 
    if is_valid_lua_ident(key) then
-      key_expr = Codegen.convert_ident_to_expression(key)
+      key_expr = Codegen.convert_leaf_to_expression(key)
    else
-      local expr
-      if type(key) == "table" and key[1] == "expression" then
-         expr = key
-      elseif type(key) == "table" and key.leaf_type == "Ident" then
-         expr = Codegen.convert_ident_to_expression(key)
-      end
+      local expr = Codegen.gen_expression(key)
       key_expr = NodeTypes.constructor_key(Codegen.gen_symbol("["), expr, Codegen.gen_symbol("]"))
    end
 
-   -- TODO: it quickly gets annoying to have to specify a multitude of
-   -- functions depending on the thing to use to generate an
-   -- expression. there should be a catch-all "generate expression"
-   -- function that behaves well no matter what is thrown at it -
-   -- plain Lua value, leaf node, or container node.
-   local value_expr
-   if type(value) == "table" and value[1] == "expression" then
-      value_expr = value
-   elseif type(key) == "table" and key.leaf_type == "Ident" then
-      value_expr = Codegen.convert_ident_to_expression(value)
-   else
-      value_expr = Codegen.gen_expression(value)
-   end
-
+   local value_expr = Codegen.gen_expression(value)
    value_expr:set_prefix(" ")
 
    return NodeTypes.key_value_pair(key_expr, Codegen.gen_symbol("="):set_prefix(" "), value_expr)
@@ -204,11 +195,12 @@ end
 function Codegen.gen_parenthesized_expression(expr)
    local l_lparen = Codegen.gen_symbol("(")
    local l_rparen = Codegen.gen_symbol(")")
+   local p = NodeTypes.parenthesized_expression(l_lparen, expr, l_rparen)
 
-   l_lparen:set_prefix(" ")
+   p:set_prefix(expr:prefix_to_string() or "")
    expr:set_prefix("")
 
-   return NodeTypes.parenthesized_expression(l_lparen, expr, l_rparen)
+   return p
 end
 
 return Codegen

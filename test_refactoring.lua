@@ -1,4 +1,4 @@
-local utils = require("yalf.utils")
+local utils = require("kotaro.utils")
 
 local ex = {}
 
@@ -52,9 +52,6 @@ end
 
 local require_to_hoge = {}
 
-local function is_function_call(node)
-end
-
 function require_to_hoge:applies_to(node)
    return node:type() == "suffixed_expression"
       and node:is_function_call()
@@ -62,16 +59,8 @@ function require_to_hoge:applies_to(node)
 end
 
 function require_to_hoge:execute(node)
-   node:arguments():at(1):set("\"hogz\"")
+   node:arguments():at(1):set_value("\"hogz\"")
+   node:changed()
 end
 
-return {
-   require_to_hoge,
-   on_hotload = function(old, new)
-      for k, v in ipairs(old) do
-         if type(v) == "table" then
-            utils.replace_table(v, new[k])
-         end
-      end
-   end
-}
+return require_to_hoge

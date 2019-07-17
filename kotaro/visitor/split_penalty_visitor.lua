@@ -1,4 +1,4 @@
-local tree_utils = require("yalf.parser.tree_utils")
+local tree_utils = require("kotaro.parser.tree_utils")
 
 local split_penalty_visitor = {}
 

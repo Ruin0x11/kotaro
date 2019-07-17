@@ -1,4 +1,4 @@
-local Codegen = require("yalf.parser.codegen")
+local Codegen = require("kotaro.parser.codegen")
 
 local reformatting_visitor = {}
 

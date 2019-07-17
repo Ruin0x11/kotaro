@@ -1,4 +1,4 @@
-local visitor = require("yalf.visitor")
+local visitor = require("kotaro.visitor")
 
 local parenting_visitor = {}
 

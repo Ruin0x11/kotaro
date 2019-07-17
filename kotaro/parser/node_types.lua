@@ -1,7 +1,9 @@
-local visitor = require("yalf.visitor")
-local code_convert_visitor = require("yalf.visitor.code_convert_visitor")
-local tree_utils = require("yalf.parser.tree_utils")
-local utils = require("yalf.utils")
+local visitor = require("kotaro.visitor")
+local code_convert_visitor = require("kotaro.visitor.code_convert_visitor")
+local parenting_visitor = require("kotaro.visitor.parenting_visitor")
+local tree_utils = require("kotaro.parser.tree_utils")
+local utils = require("kotaro.utils")
+local iterators = require("kotaro.iterators")
 
 -- TODO: iterator instead of table
 local function all_but_first(tbl, n)
@@ -86,20 +88,29 @@ function base_mt:raw_value()
    return nil
 end
 
+base_mt.iter_depth_first = iterators.iter_depth_first
+base_mt.iter_breadth_first = iterators.iter_breadth_first
+base_mt.iter_left = iterators.iter_left
+base_mt.iter_right = iterators.iter_right
+
 function base_mt:first_leaf()
-   local leaf = self
-   while leaf and leaf[1] ~= "leaf" do
-      leaf = leaf[2]
+   for _, child in self:iter_left() do
+      if child[1] == "leaf" then
+         return child
+      end
    end
-   return leaf
+
+   return nil
 end
 
 function base_mt:last_leaf()
-   local leaf = self
-   while leaf and leaf[1] ~= "leaf" do
-      leaf = leaf[#leaf]
+   for _, child in self:iter_right() do
+      if child[1] == "leaf" then
+         return child
+      end
    end
-   return leaf
+
+   return nil
 end
 
 function base_mt:right_boundary()
@@ -163,23 +174,30 @@ function base_mt:replace_with(other, params)
 end
 
 function base_mt:prefix()
-   local o = self[2]
-
-   if o then
-      return o:prefix()
+   local c = self:first_leaf()
+   if c then
+      return c:prefix()
    end
 
    return nil
 end
 
 function base_mt:set_prefix(prefix)
-   local o = self[2]
-
-   if o then
-      o:set_prefix(prefix)
+   local c = self:first_leaf()
+   if c then
+      c:set_prefix(prefix)
    end
 
    return self
+end
+
+function base_mt:prefix_to_string()
+   local c = self:first_leaf()
+   if c then
+      return c:prefix_to_string()
+   end
+
+   return nil
 end
 
 function base_mt:was_split()
@@ -187,13 +205,27 @@ function base_mt:was_split()
    return leaf and leaf:was_split()
 end
 
+-- Reconnect all parent-child relationships for this node's parent and
+-- line numbers for the rest of the file.
+function base_mt:changed()
+   local node = self.parent
+   if not node then
+      node = self
+   end
+   visitor.visit(parenting_visitor:new(), node)
+end
+
 local find_visitor = {}
-function find_visitor:new(pred, nesting)
-   return setmetatable({ pred = pred, depth = 0, nesting = nesting or 0 }, { __index = find_visitor })
+function find_visitor:new(pred, n, nesting)
+   return setmetatable({ pred = pred, depth = 0, n = n or 1, nesting = nesting or 0 }, { __index = find_visitor })
 end
 function find_visitor:visit_node(node, visit)
    if self.pred(node) then
-      return node
+      if self.n <= 1 then
+         return node
+      else
+         self.n = self.n - 1
+      end
    end
 
    self.depth = self.depth + 1
@@ -213,17 +245,43 @@ function find_visitor:visit_node(node, visit)
 end
 function find_visitor:visit_leaf(leaf)
    if self.pred(leaf) then
-      return leaf
+      if self.n <= 1 then
+         return leaf
+      else
+         self.n = self.n - 1
+      end
    end
 end
 
-function base_mt:find_child(pred, nesting)
-   return visitor.visit(find_visitor:new(pred, nesting), self)
+function base_mt:find_child(pred, n, nesting)
+   return visitor.visit(find_visitor:new(pred, n, nesting), self)
 end
 
-function base_mt:find_child_of_type(_type, nesting)
+function base_mt:find_child_of_type(_type, n, nesting)
    local pred = function(i) return i[1] == _type end
-   return self:find_child(pred, nesting)
+   return self:find_child(pred, n, nesting)
+end
+
+local at_point = {}
+function at_point:new(line, column)
+   return setmetatable({ line = line, column = column }, { __index = at_point })
+end
+function at_point:visit_node(node, visit)
+   local r = visit(self, node)
+   if r then return r end
+
+   return nil
+end
+function at_point:visit_leaf(leaf)
+   if leaf.line >= self.line and leaf.column >= self.column then
+      return leaf
+   end
+
+   return nil
+end
+
+function base_mt:find_child_at_point(line, column, _type)
+   return visitor.visit(at_point:new(line, column), self)
 end
 
 function base_mt:find_parent(pred)
@@ -246,7 +304,7 @@ function base_mt:find_parent(pred)
       parent = parent.parent
    end
 
-   return parent
+   return nil
 end
 
 function base_mt:find_parent_of_type(_type)
@@ -254,7 +312,45 @@ function base_mt:find_parent_of_type(_type)
    return self:find_parent(pred)
 end
 
+
+-- from inspect.lua
+local function smart_quote(str)
+  if str:match('"') and not str:match("'") then
+    return "'" .. str .. "'"
+  end
+  return '"' .. str:gsub('"', '\\"') .. '"'
+end
+
+local short_control_char_escapes = {
+  ["\a"] = "\\a",  ["\b"] = "\\b", ["\f"] = "\\f", ["\n"] = "\\n",
+  ["\r"] = "\\r",  ["\t"] = "\\t", ["\v"] = "\\v"
+}
+local long_control_char_escapes = {} -- \a => nil, \0 => \000, 31 => \031
+for i=0, 31 do
+  local ch = string.char(i)
+  if not short_control_char_escapes[ch] then
+    short_control_char_escapes[ch] = "\\"..i
+    long_control_char_escapes[ch]  = string.format("\\%03d", i)
+  end
+end
+
+local function escape(str)
+  return (str:gsub("\\", "\\\\")
+             :gsub("(%c)%f[0-9]", long_control_char_escapes)
+             :gsub("%c", short_control_char_escapes))
+end
+
 function base_mt:__tostring()
+   if self:type() == "leaf" then
+      return string.format("%s(%s) [line=%d, column=%d, prefix='%s']",
+                           string.upper(self.leaf_type), smart_quote(tostring(self.value)), self.line, self.column, escape(self:prefix_to_string()))
+   else
+      return string.format("%s [%d children]",
+                           self[1], #self-1)
+   end
+end
+
+function base_mt:dump()
    local string_io = {
       stream = "",
       write = function(self, s)
@@ -372,7 +468,7 @@ function mt.function_declaration.init(l_function, name, children, l_end)
    return { "function_declaration", l_function, name, children, l_end }
 end
 function mt.function_declaration:make_local(l_local)
-   local Codegen = require("yalf.parser.codegen")
+   local Codegen = require("kotaro.parser.codegen")
 
    if self:is_local() then
       return
@@ -476,8 +572,20 @@ function mt.assignment_statement.init(lhs, l_equals, rhs)
    end
    return { "assignment_statement", lhs, l_equals or nil, rhs or nil }
 end
+function mt.assignment_statement:lhs()
+   if self:is_local() then
+      return self[3]
+   end
+   return self[2]
+end
+function mt.assignment_statement:rhs()
+   if self:is_local() then
+      return self[5]
+   end
+   return self[4]
+end
 function mt.assignment_statement:make_local(l_local)
-   local Codegen = require("yalf.parser.codegen")
+   local Codegen = require("kotaro.parser.codegen")
 
    if self:is_local() then
       return
@@ -508,6 +616,9 @@ end
 function mt.parenthesized_expression:children()
    return { self[3] }
 end
+function mt.parenthesized_expression:evaluate(scope)
+   return self[3]:evaluate(scope)
+end
 
 mt.statement_with_semicolon = {}
 function mt.statement_with_semicolon.init(stmt, semicolon)
@@ -531,6 +642,12 @@ function mt.expression:lhs()
 
    return self[2]
 end
+function mt.expression:operator()
+   if self:is_unary() then
+      return self[2]
+   end
+   return self[3]
+end
 function mt.expression:rhs()
    if self:is_unary() then
       return self[3]
@@ -539,24 +656,50 @@ function mt.expression:rhs()
    return self[4]
 end
 function mt.expression:primary_expression()
-   if self[2]:type() == "suffixed_expression" then
-      return self[2]:primary_expression()
-   end
-   return self[2]
+   return self:rhs()
 end
-function mt.expression:to_value()
-   local leaf = self[2]
-   local leaf_type = leaf.leaf_type
-
-   if leaf_type == "Number" then
-      return tonumber(leaf.value)
-   elseif leaf_type == "String" then
-      return leaf.value:sub(2,#leaf.value-1)
-   elseif leaf_type == "Boolean" then
-      return leaf.value == "true"
+function mt.expression:set_value(value)
+   local Codegen = require("kotaro.parser.codegen")
+   -- TODO
+   self[2] = Codegen.gen_expression(value)[2]
+   self.changed = true
+end
+function mt.expression:evaluate(scope)
+   if self:is_unary() then
+      local op = self:operator().value
+      local val = self:rhs():evaluate(scope)
+      if op.value == "not" then
+         return not val
+      elseif op.value == "-" then
+         return -val
+      elseif op.value == "#" then
+         return #val
+      else
+         error(string.format("invalid unary operator '%s'", op))
+      end
    end
 
-   return nil
+   local lhs = self:lhs():evaluate(scope)
+   local op = self:operator().value
+   local rhs = self:rhs():evaluate(scope)
+
+   if     op == "+"   then return lhs +   rhs
+   elseif op == "-"   then return lhs -   rhs
+   elseif op == "%"   then return lhs %   rhs
+   elseif op == "/"   then return lhs /   rhs
+   elseif op == "*"   then return lhs *   rhs
+   elseif op == "^"   then return lhs ^   rhs
+   elseif op == ".."  then return lhs ..  rhs
+   elseif op == "<"   then return lhs <   rhs
+   elseif op == "<="  then return lhs <=  rhs
+   elseif op == "~="  then return lhs ~=  rhs
+   elseif op == ">"   then return lhs >   rhs
+   elseif op == ">="  then return lhs >=  rhs
+   elseif op == "and" then return lhs and rhs
+   elseif op == "or"  then return lhs or  rhs
+   end
+
+   error(string.format("invalid binary operator '%s'", op))
 end
 
 mt.member_expression = {}
@@ -659,7 +802,7 @@ function mt.suffixed_expression:declarer()
    return decl
 end
 function mt.suffixed_expression:set_declarer(declarer, method)
-   local Codegen = require("yalf.parser.codegen")
+   local Codegen = require("kotaro.parser.codegen")
 
    if method == nil then
       method = self:is_method()
@@ -700,6 +843,13 @@ end
 function mt.suffixed_expression:nonprimary_expressions()
    return all_but_first(self, 2)
 end
+function mt.suffixed_expression:evaluate(scope)
+   if #self == 2 then
+      -- lookup in scope as name
+      return scope[self:primary_expression().value]
+   end
+   error(string.format("cannot evaluate suffixed expression '%s'", scope))
+end
 
 local function remove_in_comma_list(node, i, braces)
    braces = braces or 0
@@ -732,7 +882,7 @@ end
 
 local function insert_in_comma_list(node, i, item, braces)
    braces = braces or 0
-   local Codegen = require("yalf.parser.codegen")
+   local Codegen = require("kotaro.parser.codegen")
 
    if i then
       i = i * 2 + braces
@@ -775,7 +925,7 @@ end
 function mt.statement_list:at(i)
    return self[i+1]
 end
-function mt.statement_list:insert(stmt, i)
+function mt.statement_list:insert_node(stmt, i)
    if i then
       if i < 1 or i > #self then
          return
@@ -818,11 +968,11 @@ function mt.ident_list:set(tbl)
 
    self:clear()
    for _, v in ipairs(tbl) do
-      self:insert(v)
+      self:insert_node(v)
    end
 end
-function mt.ident_list:insert(ident, i)
-   local Codegen = require("yalf.parser.codegen")
+function mt.ident_list:insert_node(ident, i)
+   local Codegen = require("kotaro.parser.codegen")
 
    if type(ident) == "string" then
       ident = Codegen.gen_ident(ident)
@@ -856,8 +1006,8 @@ function mt.expression_list:count()
    end
    return math.floor(#self / 2)
 end
-function mt.expression_list:insert(expr, i)
-   local Codegen = require("yalf.parser.codegen")
+function mt.expression_list:insert_node(expr, i)
+   local Codegen = require("kotaro.parser.codegen")
 
    if type(expr) == "string" then
       expr = Codegen.gen_expression(expr)
@@ -938,7 +1088,7 @@ function mt.constructor_expression:count(i)
    end
    return math.floor((#self-2) / 2)
 end
-function mt.constructor_expression:insert(kv_pair, i)
+function mt.constructor_expression:insert_node(kv_pair, i)
    if kv_pair:type() ~= "key_value_pair" and kv_pair:type() ~= "expression" then
       error("Can only insert key value pairs or expressions, got " ..  tostring(kv_pair))
    end
@@ -952,7 +1102,7 @@ function mt.constructor_expression:insert(kv_pair, i)
    insert_in_comma_list(self, i, kv_pair, 1)
 end
 function mt.constructor_expression:index(key)
-   local Codegen = require("yalf.parser.codegen")
+   local Codegen = require("kotaro.parser.codegen")
 
    if type(key) == "number" then
       local index = 1
@@ -998,7 +1148,7 @@ function mt.constructor_expression:index(key)
    return nil
 end
 function mt.constructor_expression:modify_index(key, expr)
-   local Codegen = require("yalf.parser.codegen")
+   local Codegen = require("kotaro.parser.codegen")
 
    local is_expression = expr == nil or (type(expr) == "table" and expr[1] == "expression")
 
@@ -1022,7 +1172,7 @@ function mt.constructor_expression:modify_index(key, expr)
       end
    else
       local kv_pair = Codegen.gen_key_value_pair(key, expr)
-      self:insert(kv_pair)
+      self:insert_node(kv_pair)
    end
 
    return expr
@@ -1086,9 +1236,10 @@ function mt.leaf:prefix()
 end
 function mt.leaf:set_prefix(prefix)
    if type(prefix) == "string" then
-      local Codegen = require("yalf.parser.codegen")
+      local Codegen = require("kotaro.parser.codegen")
       prefix = Codegen.make_prefix(prefix)
    end
+   assert(prefix)
    self._prefix = prefix
    return self
 end
@@ -1140,6 +1291,25 @@ function mt.leaf:clone()
 
    setmetatable(tbl, getmetatable(self))
    return tbl
+end
+function mt.leaf:evaluate(scope)
+   if self.leaf_type == "Number" then
+      return tonumber(self.value)
+   elseif self.leaf_type == "String" then
+      return self.value:sub(2,#self.value-1)
+   elseif self.leaf_type == "Keyword" then
+      if self.value == "true" then
+         return true
+      elseif self.value == "false" then
+         return false
+      elseif self.value == "nil" then
+         return nil
+      end
+   elseif self.leaf_type == "Ident" then
+      return scope[self.value]
+   end
+
+   error(string.format("Cannot evaluate leaf '%s' of type '%'", self.value, self.leaf_type))
 end
 
 for k, v in pairs(mt) do

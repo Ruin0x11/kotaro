@@ -9,9 +9,12 @@ end
 local visitor = {}
 
 function visitor.visit_node(v, node, visit)
-   for _, child in node:iter_rest() do
+   local child = node[2]
+
+   while child do
       local r = visitor.visit(v, child)
       if r then return r end
+      child = child.right
    end
 end
 

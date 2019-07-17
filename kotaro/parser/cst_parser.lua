@@ -1,7 +1,7 @@
 local class = require("thirdparty.pl.class")
-local lexer = require("yalf.parser.lexer")
-local utils = require("yalf.utils")
-local NodeTypes = require("yalf.parser.node_types")
+local lexer = require("kotaro.parser.lexer")
+local utils = require("kotaro.utils")
+local NodeTypes = require("kotaro.parser.node_types")
 
 -- Takes tokenized source and converts it to a Concrete Syntax Tree
 -- (CST), which preserves whitespace and comments. The intent is to be

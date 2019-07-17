@@ -1,0 +1,14 @@
+#!/usr/bin/env lua
+
+local argparse = require("thirdparty.argparse")
+local kotaro = require("kotaro")
+
+local parser = argparse("kotaro", "A Lua source rewriting toolkit.")
+
+local editor = parser:command("editor", "Editor integration")
+editor:option("-i --input", "Input file.")
+editor:option("-o --output", "Output file.")
+editor:flag("-u --in-place", "Edit the file in place.")
+
+local args = parser:parse()
+print(require"inspect"(args))

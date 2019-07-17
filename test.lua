@@ -1,59 +1,14 @@
 hotload = require("hotload")
 hotload.hook_global_require()
 
+kotaro = require("kotaro")
 local stopwatch = require("stopwatch")
-local visitor = require("yalf.visitor")
-local code_convert_visitor = require("yalf.visitor.code_convert_visitor")
-local refactoring_visitor = require("yalf.visitor.refactoring_visitor")
-local tree_utils = require("yalf.parser.tree_utils")
+local visitor = require("kotaro.visitor")
+local code_convert_visitor = require("kotaro.visitor.code_convert_visitor")
+local refactoring_visitor = require("kotaro.visitor.refactoring_visitor")
+local tree_utils = require("kotaro.parser.tree_utils")
 
 local sw = stopwatch()
-
-function file2src(file)
-   file = file or "test_refactoring.lua"
-
-   local inf = io.open(file, 'r')
-   if not inf then
-      print("Failed to open `"..file.."` for reading")
-      return
-   end
-   local s = inf:read('*all')
-   inf:close()
-
-   return s
-end
-
-function cst2file(cst, file)
-   assert(file)
-
-   local inf = io.open(file, 'w')
-   visitor.visit(code_convert_visitor:new(inf), cst)
-   inf:close()
-end
-
-function src2cst(code)
-   sw:measure()
-
-   local cst_parser = require("yalf.parser.cst_parser")
-   local a, new = cst_parser(code):parse()
-   assert(a, new)
-
-   sw:p("parse")
-
-   return new
-end
-
-function cst2src(cst)
-   local string_io = {
-      stream = "",
-      write = function(self, s)
-         self.stream = self.stream .. s
-      end
-   }
-   local v = code_convert_visitor:new(string_io)
-   visitor.visit(v, cst)
-   return string_io.stream
-end
 
 function parse_compare(file)
    local orig = file2src(file)
@@ -71,10 +26,6 @@ function parse_compare(file)
 
       os.execute("diff /tmp/f1 /tmp/f2 --color=always")
    end
-end
-
-function file2cst(file)
-   return src2cst(file2src(file))
 end
 
 function dump(cst)
@@ -97,7 +48,7 @@ function refactor_file(file, refs)
    return cst
 end
 
-Codegen = require("yalf.parser.codegen")
+Codegen = require("kotaro.parser.codegen")
 inspect = require("inspect")
 -- cst = file2cst("test9.lua")
 
@@ -143,9 +94,9 @@ function format_file(file)
 
    sw:measure()
 
-   local pv = require("yalf.visitor.parenting_visitor")
-   local spv = require("yalf.visitor.split_penalty_visitor")
-   local rv = require("yalf.visitor.reformatting_visitor")
+   local pv = require("kotaro.visitor.parenting_visitor")
+   local spv = require("kotaro.visitor.split_penalty_visitor")
+   local rv = require("kotaro.visitor.reformatting_visitor")
    visitor.visit(pv:new(), cst)
    visitor.visit(spv:new(), cst)
    visitor.visit(rv:new(), cst)
@@ -271,3 +222,6 @@ function modify_table_index:execute(node)
    local expr = Codegen.gen_expression_from_value(val)
    node:modify_index(self.field, expr)
 end
+
+local ok
+ok, cst = kotaro.file_to_ast("test_refactoring.lua")
