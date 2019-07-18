@@ -1,6 +1,7 @@
 local NodeTypes = require("kotaro.parser.node_types")
 local cst_parser = require("kotaro.parser.cst_parser")
 local lexer = require("kotaro.parser.lexer")
+local utils = require("kotaro.utils")
 
 local Codegen = {}
 
@@ -25,12 +26,8 @@ function Codegen.gen_keyword(value)
    return NodeTypes.leaf("Keyword", value, Codegen.make_prefix(""), -1, -1)
 end
 
-local function is_valid_lua_ident(str)
-   return type(str) == "string" and string.match(str, "^[_%a][_%w]*$")
-end
-
 function Codegen.gen_ident(str)
-   if not is_valid_lua_ident(str) then
+   if not utils.is_valid_lua_ident(str) then
       error(string.format("'%s' is not a valid Lua identifier", tostring(str)))
    end
 
@@ -54,6 +51,37 @@ function Codegen.gen_expression_from_code(code)
    assert(a, new)
 
    return new
+end
+
+function Codegen.string_to_leaf(str)
+   local ok, tok = pcall(function() return Codegen.lex_one_token(str) end)
+   if not ok then
+      error(string.format("Source string '%s' does not form a valid Lua string or identifier. Error message:\n    %s", str, tok))
+   end
+
+   return tok
+end
+
+function Codegen.gen_leaf(value)
+   local leaf
+   local _type = type(value)
+
+   if _type == "number" then
+      if value < 0 then
+         error(string.format("Numeric leaf values cannot be negative, since they count as an expression. (got: %s)", value))
+      end
+      leaf = NodeTypes.leaf("Number", tostring(value))
+   elseif _type == "string" then
+      leaf = Codegen.string_to_leaf(value)
+   elseif _type == "boolean" then
+      leaf = NodeTypes.leaf("Boolean", tostring(value))
+   elseif _type == "nil" then
+      leaf = NodeTypes.leaf("Nil", tostring(value))
+   else
+      error(string.format("Cannot convert %s to a leaf", value))
+   end
+
+   return leaf
 end
 
 function Codegen.gen_expression(value)
@@ -88,7 +116,11 @@ function Codegen.gen_expression(value)
 
       ops = { NodeTypes.suffixed_expression({tok}) }
    elseif _type == "boolean" then
-      ops = { NodeTypes.leaf("Keyword", tostring(value)) }
+      ops = { NodeTypes.leaf("Boolean", tostring(value)) }
+   elseif _type == "nil" then
+      ops = { NodeTypes.leaf("Nil", tostring(value)) }
+   else
+      error(string.format("Cannot convert %s to an expression", value))
    end
    if #ops == 0 then
       return nil
@@ -179,7 +211,7 @@ function Codegen.gen_key_value_pair(key, value)
 
    local key_expr
 
-   if is_valid_lua_ident(key) then
+   if utils.is_valid_lua_ident(key) then
       key_expr = Codegen.convert_leaf_to_expression(key)
    else
       local expr = Codegen.gen_expression(key)

@@ -1,6 +1,7 @@
 local visitor = require("kotaro.visitor")
 local code_convert_visitor = require("kotaro.visitor.code_convert_visitor")
 local parenting_visitor = require("kotaro.visitor.parenting_visitor")
+local rewriting_visitor = require("kotaro.visitor.rewriting_visitor")
 local tree_utils = require("kotaro.parser.tree_utils")
 local utils = require("kotaro.utils")
 local iterators = require("kotaro.iterators")
@@ -113,8 +114,13 @@ function base_mt:last_leaf()
    return nil
 end
 
-function base_mt:right_boundary()
+function base_mt:left_boundary()
    local leaf = self:first_leaf()
+   return leaf and leaf:right_boundary()
+end
+
+function base_mt:right_boundary()
+   local leaf = self:last_leaf()
    return leaf and leaf:right_boundary()
 end
 
@@ -154,6 +160,16 @@ function base_mt:replace_with(other, params)
    local prefix
    if params.preserve_prefix then
       prefix = self:prefix()
+   end
+
+   if other[1] == "leaf" then
+      self.leaf_type = other.leaf_type
+      self.value = other.value
+      self._prefix = other._prefix
+   else
+      self.leaf_type = nil
+      self.value = nil
+      self._prefix = nil
    end
 
    -- iterate array part, preseve metadata in map part
@@ -262,26 +278,47 @@ function base_mt:find_child_of_type(_type, n, nesting)
    return self:find_child(pred, n, nesting)
 end
 
-local at_point = {}
-function at_point:new(line, column)
-   return setmetatable({ line = line, column = column }, { __index = at_point })
+local at_loc = {}
+function at_loc:new(line, column)
+   return setmetatable({ line = line, column = column }, { __index = at_loc })
 end
-function at_point:visit_node(node, visit)
+function at_loc:visit_node(node, visit)
    local r = visit(self, node)
    if r then return r end
 
    return nil
 end
-function at_point:visit_leaf(leaf)
-   if leaf.line >= self.line and leaf.column >= self.column then
+function at_loc:visit_leaf(leaf)
+   if leaf.line >= self.line and leaf.column + #leaf.value >= self.column then
       return leaf
    end
 
    return nil
 end
 
-function base_mt:find_child_at_point(line, column, _type)
-   return visitor.visit(at_point:new(line, column), self)
+function base_mt:leaf_at_loc(line, column)
+   return visitor.visit(at_loc:new(line, column), self)
+end
+
+function base_mt:find_child_at_loc(line, column, pred)
+   local leaf = self:leaf_at_loc(line, column)
+   if not leaf then return nil end
+   return leaf:find_parent(pred)
+end
+
+function base_mt:find_child_of_type_at_loc(line, column, _type)
+   local leaf = self:leaf_at_loc(line, column)
+   if not leaf then return nil end
+   return leaf:find_parent_of_type(_type)
+end
+
+function base_mt:is_contained_in_loc(line, column)
+   local first = self:first_leaf()
+   if not first then return false end
+   local last = self:last_leaf()
+   if not last then return false end
+
+   return first.line <= line and first.column <= column and last.line >= line and last.column >= column
 end
 
 function base_mt:find_parent(pred)
@@ -308,42 +345,24 @@ function base_mt:find_parent(pred)
 end
 
 function base_mt:find_parent_of_type(_type)
+   assert(type(_type) == "string", "'_type' must be a string")
    local pred = function(i) return i[1] == _type end
    return self:find_parent(pred)
 end
 
-
--- from inspect.lua
-local function smart_quote(str)
-  if str:match('"') and not str:match("'") then
-    return "'" .. str .. "'"
-  end
-  return '"' .. str:gsub('"', '\\"') .. '"'
+function base_mt:rewrite(rewrite)
+   local rf = rewriting_visitor:new({rewrite})
+   visitor.visit(rf, self)
+   rf:do_rewrite()
+   self:changed()
+   return self
 end
 
-local short_control_char_escapes = {
-  ["\a"] = "\\a",  ["\b"] = "\\b", ["\f"] = "\\f", ["\n"] = "\\n",
-  ["\r"] = "\\r",  ["\t"] = "\\t", ["\v"] = "\\v"
-}
-local long_control_char_escapes = {} -- \a => nil, \0 => \000, 31 => \031
-for i=0, 31 do
-  local ch = string.char(i)
-  if not short_control_char_escapes[ch] then
-    short_control_char_escapes[ch] = "\\"..i
-    long_control_char_escapes[ch]  = string.format("\\%03d", i)
-  end
-end
-
-local function escape(str)
-  return (str:gsub("\\", "\\\\")
-             :gsub("(%c)%f[0-9]", long_control_char_escapes)
-             :gsub("%c", short_control_char_escapes))
-end
 
 function base_mt:__tostring()
    if self:type() == "leaf" then
       return string.format("%s(%s) [line=%d, column=%d, prefix='%s']",
-                           string.upper(self.leaf_type), smart_quote(tostring(self.value)), self.line, self.column, escape(self:prefix_to_string()))
+                           string.upper(self.leaf_type), utils.quote_string(tostring(self.value)), self.line, self.column, utils.escape_string(self:prefix_to_string()))
    else
       return string.format("%s [%d children]",
                            self[1], #self-1)
@@ -1297,19 +1316,22 @@ function mt.leaf:evaluate(scope)
       return tonumber(self.value)
    elseif self.leaf_type == "String" then
       return self.value:sub(2,#self.value-1)
-   elseif self.leaf_type == "Keyword" then
-      if self.value == "true" then
-         return true
-      elseif self.value == "false" then
-         return false
-      elseif self.value == "nil" then
-         return nil
-      end
+   elseif self.leaf_type == "Boolean" then
+      return self.value == "true"
+   elseif self.leaf_type == "Nil" then
+      return nil
    elseif self.leaf_type == "Ident" then
-      return scope[self.value]
+      return scope and scope[self.value]
    end
 
-   error(string.format("Cannot evaluate leaf '%s' of type '%'", self.value, self.leaf_type))
+   error(string.format("Cannot evaluate leaf '%s' of type '%s'", self.value, self.leaf_type))
+end
+function mt.leaf:set_value(val)
+   local Codegen = require("kotaro.parser.codegen")
+   local new = Codegen.gen_leaf(val)
+   new:set_prefix(self:prefix_to_string())
+
+   self:replace_with(new)
 end
 
 for k, v in pairs(mt) do

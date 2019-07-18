@@ -66,4 +66,42 @@ function utils.replace_table(tbl, other)
    return tbl
 end
 
+function utils.is_valid_lua_ident(str)
+   return type(str) == "string" and string.match(str, "^[_%a][_%w]*$")
+end
+
+function utils.quote_string(str)
+  if str:match('"') and not str:match("'") then
+    return "'" .. str .. "'"
+  end
+  return '"' .. str:gsub('"', '\\"') .. '"'
+end
+
+local short_control_char_escapes = {
+  ["\a"] = "\\a",  ["\b"] = "\\b", ["\f"] = "\\f", ["\n"] = "\\n",
+  ["\r"] = "\\r",  ["\t"] = "\\t", ["\v"] = "\\v"
+}
+local long_control_char_escapes = {} -- \a => nil, \0 => \000, 31 => \031
+for i=0, 31 do
+  local ch = string.char(i)
+  if not short_control_char_escapes[ch] then
+    short_control_char_escapes[ch] = "\\"..i
+    long_control_char_escapes[ch]  = string.format("\\%03d", i)
+  end
+end
+
+function utils.escape_string(str)
+  return (str:gsub("\\", "\\\\")
+             :gsub("(%c)%f[0-9]", long_control_char_escapes)
+             :gsub("%c", short_control_char_escapes))
+end
+
+function utils.table_length(tbl)
+   local i = 0
+   for _, _ in pairs(tbl) do
+      i = i + 1
+   end
+   return i
+end
+
 return utils

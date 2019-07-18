@@ -5,48 +5,10 @@ kotaro = require("kotaro")
 local stopwatch = require("stopwatch")
 local visitor = require("kotaro.visitor")
 local code_convert_visitor = require("kotaro.visitor.code_convert_visitor")
-local refactoring_visitor = require("kotaro.visitor.refactoring_visitor")
+local rewriting_visitor = require("kotaro.visitor.rewriting_visitor")
 local tree_utils = require("kotaro.parser.tree_utils")
 
 local sw = stopwatch()
-
-function parse_compare(file)
-   local orig = file2src(file)
-   local cst = src2cst(orig)
-
-   local result = cst2src(cst)
-
-   if result ~= orig then
-      local f1 = io.open("/tmp/f1", "w")
-      local f2 = io.open("/tmp/f2", "w")
-      f1:write(orig)
-      f2:write(result)
-      f1:close()
-      f2:close()
-
-      os.execute("diff /tmp/f1 /tmp/f2 --color=always")
-   end
-end
-
-function dump(cst)
-   tree_utils.dump(cst)
-end
-
-function refactor_file(file, refs)
-   local cst = file
-   if type(file) == "string" then
-      cst = file2cst(file)
-   end
-
-   sw:measure()
-
-   local refs = refs or require("test_refactoring")
-   visitor.visit(refactoring_visitor:new(refs), cst)
-
-   sw:p("refactor")
-
-   return cst
-end
 
 Codegen = require("kotaro.parser.codegen")
 inspect = require("inspect")
@@ -223,5 +185,24 @@ function modify_table_index:execute(node)
    node:modify_index(self.field, expr)
 end
 
-local ok
-ok, cst = kotaro.file_to_ast("test_refactoring.lua")
+cst = kotaro.file_to_ast("test_refactoring.lua")
+
+local function file2src(file)
+   local input, err = io.open(file, "r")
+   assert(input, err)
+
+   local src = input:read("*all")
+   input:close()
+
+   return src
+end
+
+d = function()
+   local a = file2src("test.lua")
+   local b = file2src("test_diff.lua")
+
+   local r = require("kotaro.replacements"):new()
+
+   r:diff(a, b, "test.lua")
+   r:write(io.stdout)
+end

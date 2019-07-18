@@ -59,7 +59,7 @@ function require_to_hoge:applies_to(node)
 end
 
 function require_to_hoge:execute(node)
-   node:arguments():at(1):set_value("\"hogz\"")
+   node:arguments():at(1):set_value("hoge")
    node:changed()
 end
 

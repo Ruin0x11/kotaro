@@ -2,13 +2,271 @@
 
 local argparse = require("thirdparty.argparse")
 local kotaro = require("kotaro")
+local utils = require("kotaro.utils")
+local replacements = require("kotaro.replacements")
+local visitor = require("kotaro.visitor")
+local print_visitor = require("kotaro.visitor.print_visitor")
 
-local parser = argparse("kotaro", "A Lua source rewriting toolkit.")
+local parser = argparse("kotaro", "A Lua source code rewriting toolkit.")
 
-local editor = parser:command("editor", "Editor integration")
-editor:option("-i --input", "Input file.")
-editor:option("-o --output", "Output file.")
-editor:flag("-u --in-place", "Edit the file in place.")
+local format = parser:command("format", "Format source code.")
+format:flag("-u --in-place", "Edit the file in place.")
+format:option("-f --output-format", "Output format.", "code")
+format:argument("input_files", "Input files."):args("*")
+
+local rewrite = parser:command("rewrite", "Rewrite source code.")
+rewrite:flag("-u --in-place", "Edit the file in place.")
+rewrite:option("-f --output-format", "Output format.", "code")
+rewrite:flag("--editor-params", "Output editor-consumable parameter list.")
+rewrite:flag("--editor-target-files", "Output editor-consumable list of files that might be changed.")
+rewrite:option("-p --param", "Parameters to pass to the rewrite."):count("*")
+rewrite:argument("rewrite_name", "Rewrite file."):args("1")
+rewrite:argument("input_files", "Input files."):args("*")
+
+local function format_error(str, ...)
+   error(string.format(str, ...))
+end
+
+local function get_input_stream(name)
+   if type(name) == "table" and name.type == "stdin" then
+      return io.stdin
+   end
+
+   local input, err = io.open(name, "r")
+   if not input then
+      format_error("Could not open file %s: %s", name, err)
+   end
+
+   return input
+end
+
+local function get_output_stream(name)
+   if type(name) == "table" and name.type == "stdout" then
+      return io.stdout
+   end
+
+   local output, err = io.open(name, "w")
+   if not output then
+      format_error("Could not open file %s: %s", name, err)
+   end
+
+   return output
+end
+
+local numbers = utils.set {
+   "current_line",
+   "current_column",
+   "number",
+}
+
+local strings = utils.set {
+   "current_file",
+   "string",
+}
+
+local function parse_value(value, kind)
+   if numbers[kind] then
+      return tonumber(value)
+   end
+
+   if strings[kind] then
+      -- `value` will already be a string.
+      return value
+   end
+
+   if kind == "boolean" then
+      return value == "true"
+   end
+
+   format_error("Unknown parameter type '%s' (%s)", kind, value)
+end
+
+local function parse_param_kv_pair(str)
+   -- TODO: literal strings by surrounding in quotes
+   return string.match(str, "^([^=]+)=([^=]+)$")
+end
+
+local function parse_params(params, user_input)
+   local result = {}
+   for _, str in ipairs(user_input) do
+      local key, value = parse_param_kv_pair(str)
+      if not key or not value then
+         format_error("Invalid parameter input %s, must have form 'key=value'", str)
+      end
+
+      local opts = params[key]
+
+      -- NOTE: Silently ignore superfluous input parameters.
+      if opts then
+         result[key] = parse_value(value, opts.type)
+      end
+   end
+
+   local missing = {}
+
+   for k, opts in pairs(params) do
+      if not result[k] and not opts.is_optional then
+         missing[#missing+1] = { name = k, type = opts.type }
+      end
+   end
+
+   if #missing > 0 then
+      local msg = string.format("%s (%s)", missing[1].name, missing[1].type)
+      for i=2, #missing do
+         msg = string.format("%s, %s (%s)", msg, missing[i].name, missing[i].type)
+      end
+
+      format_error("Missing required parameters: %s", msg)
+   end
+
+   return result
+end
+
+local function assert_is_ident(str)
+   assert(utils.is_valid_lua_ident(str), string.format("'%s' must be a valid Lua identifier (no spaces).", str))
+end
+
+local function dump_ast(stream, ast)
+   visitor.visit(print_visitor:new(stream), ast)
+end
+
+local function output_result(result, output, args)
+   local output_format = args.output_format
+   local in_place = false
+   local out = output
+
+   if output_format == "code" then
+      if in_place then
+         out = get_output_stream(result.file)
+      end
+
+      kotaro.output_ast_as_code(result.after, out)
+
+      if in_place then
+         out:close()
+      end
+   elseif output_format == "edit_list" then
+      local a = result.before:as_code()
+      local b = result.after:as_code()
+
+      local r = replacements:new()
+      r:diff(a, b, "test.lua")
+      r:write(out)
+   elseif output_format == "ast" then
+      dump_ast(output, result.after)
+   else
+      format_error("unknown output format '%s'", output_format)
+   end
+end
+
+local function rewrite(args)
+   local output = io.stdout
+
+   local chunk, err = loadfile(args.rewrite_name)
+   if not chunk then error(chunk) end
+
+   local ok, rewrite = xpcall(chunk, debug.traceback)
+   if not ok then
+      format_error("Error reading rewrite script: %s", rewrite)
+   end
+
+   if not rewrite.execute then
+      format_error("Lua chunk '%s' is missing function 'execute'", args.rewrite_name)
+   end
+
+   local params = rewrite.params or {}
+
+   -- Check that each key/value is a valid Lua identifer (has no
+   -- spaces, equals or semicolons), so that editor output will not be
+   -- broken by passing in arbitrary strings.
+   for name, param in pairs(params) do
+      assert_is_ident(name)
+      for k, v in pairs(param) do
+         assert_is_ident(k)
+         assert_is_ident(v)
+      end
+   end
+
+   if args.editor_params then
+      for name, param in pairs(params) do
+         output:write("name")
+         output:write("=")
+         output:write(name)
+         output:write(";")
+         for k, v in pairs(param) do
+            output:write(k)
+            output:write("=")
+            output:write(v)
+            output:write(";")
+         end
+         output:write("\n")
+      end
+      return
+   end
+
+   local values = parse_params(params, args.param)
+
+   local opts = {
+      input_files = args.input_files,
+      output_file = args.output
+   }
+   local input_files = args.input_files
+   if rewrite.determine_input_files then
+      input_files = rewrite:determine_input_files(values, opts)
+   end
+
+   if args.editor_target_files then
+      for _, name in ipairs(input_files) do
+         output:write(name)
+         output:write("\n")
+      end
+      return
+   end
+
+   if not input_files or #input_files == 0 then
+      io.stderr:write("WARNING: Using stdin for reading Lua code.\n")
+      input_files = {{ type = "stdin" }}
+   end
+
+   if rewrite.before_execute then
+      rewrite:before_execute(values, opts)
+   end
+
+   local result = {}
+
+   for _, file in ipairs(input_files) do
+      local input = get_input_stream(file)
+
+      -- TODO: refactor lexer to take IO stream instead of the entire
+      -- source string
+      local src = input:read('*all')
+      input:close()
+
+      local ast, err = kotaro.source_to_ast(src, file)
+      if not ast then
+         format_error("Error parsing Lua source:\n%s", err)
+      end
+
+      local after = rewrite:execute(ast:clone(), values, opts)
+
+      result[file] = {
+         before = ast,
+         after = after
+      }
+   end
+
+   if rewrite.after_execute then
+      rewrite:after_execute(values, opts)
+   end
+
+   for _, file in ipairs(input_files) do
+      local file_result = result[file]
+      output_result(file_result, output, args)
+   end
+end
 
 local args = parser:parse()
-print(require"inspect"(args))
+
+if args.rewrite then
+   rewrite(args)
+end

@@ -1,0 +1,5 @@
+local a = a+i < b/2+1      -- (a+i) < ((b/2)+1)
+local b = 5+x^2*8          -- 5+((x^2)*8)
+local c = a < y and y <= z -- (a < y) and (y <= z)
+local d = -x^2             -- -(x^2)
+local e = x^y^z            -- x^(y^z)

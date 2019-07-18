@@ -9,32 +9,35 @@ local NodeTypes = require("kotaro.parser.node_types")
 -- source exactly as passed.
 local cst_parser = class()
 
-function cst_parser:_init(src)
+function cst_parser:_init(src, filename)
    self.src = tostring(src)
-   self.lexer = lexer(self.src)
+   self.filename = filename or "<string>"
+   self.lexer = lexer(self.src, filename)
 end
 
 function cst_parser:generate_error(msg)
    local t = self.lexer:peekToken()
-   local err = string.format(">> :%s:%s: %s\n", t.line, t.column, msg)
+   local err = string.format("%s:%s:%s: %s\n", self.filename, t.line, t.column, msg)
    --find the line
    local lineNum = 0
+   local context = 2
    if type(self.src) == 'string' then
       for line in self.src:gmatch("[^\n]*\n?") do
          if line:sub(-1,-1) == '\n' then line = line:sub(1,-2) end
          lineNum = lineNum+1
-         if lineNum == t.line then
-            err = err..">> `"..line:gsub('\t','    ').."`\n"
-            for i = 1, t.column do
-               local c = line:sub(i,i)
-               if c == '\t' then
-                  err = err..'    '
-               else
-                  err = err..' '
+         if lineNum >= t.line - context and lineNum < t.line + context then
+            err = err..">> "..line:gsub('\t','    ').."\n"
+            if lineNum == t.line then
+               for i = 1, t.column do
+                  local c = line:sub(i,i)
+                  if c == '\t' then
+                     err = err..'    '
+                  else
+                     err = err..' '
+                  end
                end
+               err = err.."   ^^^^"
             end
-            err = err.."   ^^^^"
-            break
          end
       end
    end
@@ -341,9 +344,9 @@ function cst_parser:parse_simple_expression()
       return true, self.lexer:consumeToken()
    elseif self.lexer:tokenIs("String") then
       return true, self.lexer:consumeToken()
-   elseif self.lexer:tokenIsKeyword("nil") then
+   elseif self.lexer:tokenIs("Nil") then
       return true, self.lexer:consumeToken()
-   elseif self.lexer:tokenIsKeyword("false") or self.lexer:tokenIsKeyword("true") then
+   elseif self.lexer:tokenIs("Boolean") then
       return true, self.lexer:consumeToken()
    elseif self.lexer:tokenIsSymbol("...") then
       return true, self.lexer:consumeToken()
@@ -840,7 +843,9 @@ end
 function cst_parser:parse_assignment_or_call()
    local st, suffixed = self:parse_suffixed_expression()
    if not st then return st, suffixed end
-   assert(#suffixed > 1)
+   if #suffixed <= 1 then
+      return false, self:generate_error("expected ident")
+   end
 
    local stmt = suffixed
    if self.lexer:tokenIsSymbol(",") or self.lexer:tokenIsSymbol("=") then
@@ -889,7 +894,7 @@ function cst_parser:parse_statement()
    local l_semicolon
 
    if self.lexer:tokenIsSymbol(";") then
-      l_semicolon = self:consumeToken()
+      l_semicolon = self.lexer:consumeToken()
    end
 
    return st, stmt, l_semicolon

@@ -18,19 +18,22 @@ local Symbols = utils.set{'+', '-', '*', '/', '^', '%', ',', '{', '}', '[', ']',
 
 local Keywords = utils.set{
    'and', 'break', 'do', 'else', 'elseif',
-   'end', 'false', 'for', 'function', 'goto', 'if',
-   'in', 'local', 'nil', 'not', 'or', 'repeat',
-   'return', 'then', 'true', 'until', 'while',
+   'end', 'for', 'function', 'goto', 'if',
+   'in', 'local', 'not', 'or', 'repeat',
+   'return', 'then', 'until', 'while',
 };
+
+local Booleans = utils.set{'true', 'false'}
 
 local lexer = class()
 
-function lexer:_init(src)
+function lexer:_init(src, filename)
    self.p = 1
    self.line = 1
    self.char = 1
    self.src = src
    self.next = {}
+   self.filename = filename or "<string>"
 end
 
 function lexer:get()
@@ -58,7 +61,7 @@ function lexer:consume(chars)
 end
 
 function lexer:generateError(err)
-   return error(string.format(">> :%s:%s: %s", self.line, self.char, err), 0)
+   return error(string.format("%s:%s:%s: %s", self.filename, self.line, self.char, err), 0)
 end
 
 function lexer:tryGetLongString()
@@ -242,6 +245,10 @@ function lexer:emit()
       local dat = self.src:sub(start, self.p-1)
       if Keywords[dat] then
          toEmit.leaf_type = "Keyword"
+      elseif Booleans[dat] then
+         toEmit.leaf_type = "Boolean"
+      elseif dat == "nil" then
+         toEmit.leaf_type = "Nil"
       else
          toEmit.leaf_type = "Ident"
       end
