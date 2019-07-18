@@ -224,11 +224,12 @@ end
 -- Reconnect all parent-child relationships for this node's parent and
 -- line numbers for the rest of the file.
 function base_mt:changed()
+   self.was_changed = true
    local node = self.parent
    if not node then
       node = self
    end
-   visitor.visit(parenting_visitor:new(), node)
+   visitor.visit(parenting_visitor:new(node.parent), node)
 end
 
 local find_visitor = {}
@@ -681,7 +682,6 @@ function mt.expression:set_value(value)
    local Codegen = require("kotaro.parser.codegen")
    -- TODO
    self[2] = Codegen.gen_expression(value)[2]
-   self.changed = true
 end
 function mt.expression:evaluate(scope)
    if self:is_unary() then

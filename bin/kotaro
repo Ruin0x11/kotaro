@@ -130,7 +130,7 @@ local function dump_ast(stream, ast)
    visitor.visit(print_visitor:new(stream), ast)
 end
 
-local function output_result(result, output, args)
+local function output_result(result, file, output, args)
    local output_format = args.output_format
    local in_place = false
    local out = output
@@ -150,7 +150,7 @@ local function output_result(result, output, args)
       local b = result.after:as_code()
 
       local r = replacements:new()
-      r:diff(a, b, "test.lua")
+      r:diff(a, b, file)
       r:write(out)
    elseif output_format == "ast" then
       dump_ast(output, result.after)
@@ -247,12 +247,17 @@ local function rewrite(args)
          format_error("Error parsing Lua source:\n%s", err)
       end
 
-      local after = rewrite:execute(ast:clone(), values, opts)
+      local new = ast:clone()
+      new:changed()
 
-      result[file] = {
-         before = ast,
-         after = after
-      }
+      local after = rewrite:execute(new, values, opts)
+
+      if after then
+         result[file] = {
+            before = ast,
+            after = after
+         }
+      end
    end
 
    if rewrite.after_execute then
@@ -261,7 +266,7 @@ local function rewrite(args)
 
    for _, file in ipairs(input_files) do
       local file_result = result[file]
-      output_result(file_result, output, args)
+      output_result(file_result, file, output, args)
    end
 end
 

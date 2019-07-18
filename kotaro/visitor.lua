@@ -21,6 +21,12 @@ end
 function visitor.visit(v, node)
    local r
 
+   v._cache = v._cache or {}
+   if v._cache[node] then
+      error(string.format("loop detected: %s %s", tostring(node), node:dump()))
+   end
+   v._cache[node] = true
+
    if node[1] == "leaf" then
       r = v:visit_leaf(node)
    elseif type(node[1]) == "string" then

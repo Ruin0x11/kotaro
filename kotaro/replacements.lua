@@ -33,9 +33,9 @@ local function generate_edit_list(a, b, file)
 
          local r = {
             file = file,
-            offset = start_offset,
-            length = offset - start_offset + 1,
-            text = current_out,
+            offset = start_offset + 1,
+            length = offset - start_offset,
+            text = current_in,
          }
 
          table.insert(result, r)
@@ -56,16 +56,16 @@ local function generate_edit_list(a, b, file)
       if kind == "same" then
          add()
          offset = offset + #text
-         start_offset = offset + 1
+         start_offset = offset
       elseif kind == "out" then
+         offset = offset + #text
+
          if current_out then
             current_out = current_out .. text
          else
             current_out = text
          end
       elseif kind == "in" then
-         offset = offset + #text
-
          if current_in then
             current_in = current_in .. text
          else
