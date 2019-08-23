@@ -151,7 +151,7 @@ function lexer:emit()
    --get leading whitespace. The leading whitespace will include any comments
    --preceding the token. This prevents the parser needing to deal with comments
    --separately.
-   local leading = { }
+   local leading = ""
    local leadingWhite = ''
    local longStr = false
    while true do
@@ -172,13 +172,13 @@ function lexer:emit()
             Char = self.char
          }
          leadingWhite = ""
-         table.insert(leading, token)
+         leading = leading .. leadingWhite
       end
       if c == ' ' or c == '\t' then
          --whitespace
          --leadingWhite = leadingWhite..get()
          local c2 = self:get() -- ignore whitespace
-         table.insert(leading, { Type = 'Whitespace', Line = self.line, Char = self.char, Data = c2 })
+         leading = leading .. c2
       elseif c == '\n' or c == '\r' then
          local nl = self:get()
          if leadingWhite ~= "" then
@@ -189,10 +189,10 @@ function lexer:emit()
                Line = self.line,
                Char = self.char,
             }
-            table.insert(leading, token)
+            leading = leading .. leadingWhite
             leadingWhite = ""
          end
-         table.insert(leading, { Type = 'Whitespace', Line = self.line, Char = self.char, Data = nl })
+         leading = leading .. nl
       elseif c == '-' and self:peek(1) == '-' then
          --comment
          self:get()
@@ -219,12 +219,13 @@ function lexer:emit()
          Line = self.line,
          Char = self.char,
       }
-      table.insert(leading, token)
+      leading = leading .. leadingWhite
    end
 
    --get the initial char
    local thisLine = self.line
    local thisChar = self.char
+   local thisOffset = self.p
    local c = self:peek()
 
    --symbol to emit
@@ -368,6 +369,7 @@ function lexer:emit()
 
    toEmit.line = thisLine
    toEmit.column = thisChar
+   toEmit.offset = thisOffset
 
    return toEmit
 end

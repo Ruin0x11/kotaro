@@ -116,4 +116,22 @@ function utils.tostring_raw(tbl)
    return s
 end
 
+local string_buffer = {}
+function string_buffer:append(s)
+   table.insert(self, s)
+   for i=#self-1, 1, -1 do
+      if string.len(self[i]) > string.len(self[i+1]) then
+         break
+      end
+      self[i] = self[i] .. table.remove(self)
+   end
+end
+function string_buffer:__tostring()
+   return table.concat(self)
+end
+
+function utils.string_buffer()
+   return setmetatable({""}, { __index = string_buffer, __tostring = string_buffer.__tostring })
+end
+
 return utils

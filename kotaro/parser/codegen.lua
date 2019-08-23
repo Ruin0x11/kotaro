@@ -6,11 +6,7 @@ local utils = require("kotaro.utils")
 local Codegen = {}
 
 function Codegen.make_prefix(s)
-   local leading = {}
-   for i=1,#s do
-      table.insert(leading, { Type = "Whitespace", Line = nil, Char = nil, Data = string.sub(s, i, i)})
-   end
-   return leading
+   return s
 end
 
 function Codegen.lex_one_token(src)
@@ -56,6 +52,11 @@ end
 function Codegen.string_to_leaf(str)
    local ok, tok = pcall(function() return Codegen.lex_one_token(str) end)
    if not ok then
+      -- wrap as string
+      str = string.format("\"%s\"", str)
+      ok, tok = pcall(function() return Codegen.lex_one_token(str) end)
+   end
+   if not ok then
       error(string.format("Source string '%s' does not form a valid Lua string or identifier. Error message:\n    %s", str, tok))
    end
 
@@ -93,10 +94,11 @@ function Codegen.gen_expression(value)
          return value
       elseif value.leaf_type == "Ident" then
          return Codegen.convert_leaf_to_expression(value)
+      elseif value.clone then
+         return NodeTypes.expression({value})
       else
          -- HACK
-         local inspect = require("inspect")
-         return Codegen.gen_expression_from_code(inspect(value))
+         return Codegen.gen_constructor_expression(value)
       end
    end
 
@@ -109,10 +111,7 @@ function Codegen.gen_expression(value)
       end
    elseif _type == "string" then
       -- this handles the case of idents ("string") and strings ("\"string\"")
-      local ok, tok = pcall(function() return Codegen.lex_one_token(value) end)
-      if not ok then
-         error(string.format("source string '%s' does not form a valid Lua string or identifier. Error message:\n    %s", value, tok))
-      end
+      local tok = Codegen.string_to_leaf(value)
 
       ops = { NodeTypes.suffixed_expression({tok}) }
    elseif _type == "boolean" then
@@ -212,7 +211,7 @@ function Codegen.gen_key_value_pair(key, value)
    local key_expr
 
    if utils.is_valid_lua_ident(key) then
-      key_expr = Codegen.convert_leaf_to_expression(key)
+      key_expr = Codegen.gen_leaf(key)
    else
       local expr = Codegen.gen_expression(key)
       key_expr = NodeTypes.constructor_key(Codegen.gen_symbol("["), expr, Codegen.gen_symbol("]"))
@@ -231,6 +230,41 @@ function Codegen.gen_parenthesized_expression(expr)
 
    p:set_prefix(expr:prefix_to_string() or "")
    expr:set_prefix("")
+
+   return p
+end
+
+function Codegen.gen_constructor_expression(exprs)
+   local l_lparen = Codegen.gen_symbol("{")
+   local l_rparen = Codegen.gen_symbol("}")
+   local p = NodeTypes.constructor_expression(l_lparen, {}, l_rparen)
+
+   for i=1,#exprs do
+      local expr = exprs[i]
+      if type(expr) ~= "table" or not expr.clone then
+         exprs[i] = Codegen.gen_expression(expr)
+      end
+   end
+
+   local prefix = "\n   "
+   if #exprs > 0 then
+      prefix = prefix .. exprs[1]:calc_indent()
+   end
+
+   p:set_prefix(prefix)
+
+   for i, v in ipairs(exprs) do
+      p:insert_node(v)
+      if i == 1 then
+         v:set_prefix(prefix)
+      else
+         v:set_prefix(prefix)
+      end
+   end
+
+   p[#p]:set_prefix(prefix)
+
+   p:changed()
 
    return p
 end

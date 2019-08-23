@@ -1,7 +1,8 @@
+local utils = require("kotaro.utils")
 local code_convert_visitor = {}
 
 function code_convert_visitor:new(stream, params)
-   local o = setmetatable({ params = params or {}, first_prefix = false }, { __index = code_convert_visitor })
+   local o = setmetatable({ buf = utils.string_buffer(), params = params or {}, first_prefix = false }, { __index = code_convert_visitor })
    o.stream = stream or { stream = io, write = function(t, ...) t.stream.write(...) end }
    return o
 end
@@ -18,7 +19,10 @@ function code_convert_visitor:visit_leaf(leaf)
          no_ws = true
       end
    end
-   self.stream:write(leaf:as_string(no_ws))
+   if not no_ws then
+      self.buf:append(leaf._prefix)
+   end
+   self.buf:append(leaf.value)
 end
 
 return code_convert_visitor

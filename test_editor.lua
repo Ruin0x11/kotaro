@@ -22,6 +22,7 @@ function test:execute(ast, params, opts)
    if not list then return nil end
 
    local s = stmt:clone()
+   s:set_prefix(list:at(1):prefix_to_string())
    list:insert_node(s, 1)
    list:changed()
 

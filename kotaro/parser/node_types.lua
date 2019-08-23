@@ -1,6 +1,7 @@
 local visitor = require("kotaro.visitor")
 local code_convert_visitor = require("kotaro.visitor.code_convert_visitor")
 local parenting_visitor = require("kotaro.visitor.parenting_visitor")
+local line_numbering_visitor = require("kotaro.visitor.line_numbering_visitor")
 local rewriting_visitor = require("kotaro.visitor.rewriting_visitor")
 local tree_utils = require("kotaro.parser.tree_utils")
 local utils = require("kotaro.utils")
@@ -22,7 +23,7 @@ local mt = {}
 
 local base_mt = {}
 
-function base_mt:clone()
+function base_mt:clone(no_parent)
    local tbl = {}
    for k, v in pairs(self) do
       if type(v) == "table" then
@@ -45,6 +46,14 @@ function base_mt:clone()
    end
 
    setmetatable(tbl, getmetatable(self))
+
+   if no_parent then
+      tbl.parent = nil
+      tbl.left = nil
+      tbl.right = nil
+      tbl:changed()
+   end
+
    return tbl
 end
 
@@ -122,6 +131,11 @@ end
 function base_mt:right_boundary()
    local leaf = self:last_leaf()
    return leaf and leaf:right_boundary()
+end
+
+function base_mt:calc_indent()
+   local leaf = self:first_leaf()
+   return leaf and leaf:calc_indent() or ""
 end
 
 function base_mt:child_at(i)
@@ -230,6 +244,7 @@ function base_mt:changed()
       node = self
    end
    visitor.visit(parenting_visitor:new(node.parent), node)
+   visitor.visit(line_numbering_visitor:new(node:top_parent()), node)
 end
 
 local find_visitor = {}
@@ -345,6 +360,10 @@ function base_mt:find_parent(pred)
    return nil
 end
 
+function base_mt:top_parent()
+   return self:find_parent(function(p) return p.parent == nil end)
+end
+
 function base_mt:find_parent_of_type(_type)
    assert(type(_type) == "string", "'_type' must be a string")
    local pred = function(i) return i[1] == _type end
@@ -361,13 +380,8 @@ end
 
 
 function base_mt:__tostring()
-   if self:type() == "leaf" then
-      return string.format("%s(%s) [line=%d, column=%d, prefix='%s']",
-                           string.upper(self.leaf_type), utils.quote_string(tostring(self.value)), self.line, self.column, utils.escape_string(self:prefix_to_string()))
-   else
       return string.format("%s [%d children]",
                            self[1], #self-1)
-   end
 end
 
 function base_mt:dump()
@@ -391,7 +405,7 @@ function base_mt:as_code(params)
    }
    local v = code_convert_visitor:new(string_io, params)
    visitor.visit(v, self)
-   return string_io.stream
+   return tostring(v.buf)
 end
 
 function NodeTypes:mknode(name, meta)
@@ -649,11 +663,17 @@ mt.expression = {}
 function mt.expression.init(ops_and_numbers)
    return { "expression", unpack(ops_and_numbers) }
 end
+function mt.expression:is_value()
+   return #self == 2
+end
 function mt.expression:is_unary()
    return #self == 3
 end
 function mt.expression:is_binary()
    return #self == 4
+end
+function mt.expression:is_simple()
+   return self:is_value() and self[2]:type() == "leaf"
 end
 function mt.expression:lhs()
    if self:is_unary() then
@@ -663,12 +683,18 @@ function mt.expression:lhs()
    return self[2]
 end
 function mt.expression:operator()
+   if self:is_value() then
+      return nil
+   end
    if self:is_unary() then
       return self[2]
    end
    return self[3]
 end
 function mt.expression:rhs()
+   if self:is_value() then
+      return self[2]
+   end
    if self:is_unary() then
       return self[3]
    end
@@ -681,9 +707,13 @@ end
 function mt.expression:set_value(value)
    local Codegen = require("kotaro.parser.codegen")
    -- TODO
-   self[2] = Codegen.gen_expression(value)[2]
+   self[2] = Codegen.gen_expression_from_code(value)[2]
 end
 function mt.expression:evaluate(scope)
+   if self:is_value() then
+      return self:rhs():evaluate(scope)
+   end
+
    if self:is_unary() then
       local op = self:operator().value
       local val = self:rhs():evaluate(scope)
@@ -720,6 +750,22 @@ function mt.expression:evaluate(scope)
 
    error(string.format("invalid binary operator '%s'", op))
 end
+function mt.expression:modify_index(key, expr)
+   local primary = self:primary_expression()
+   if self:is_value() and primary:type() == "constructor_expression" then
+      return primary:modify_index(key, expr)
+   end
+
+   error(string.format("cannot index into this expression (primary: '%s')", primary and primary[1] or "<none>"))
+end
+function mt.expression:modify_index(key)
+   local primary = self:primary_expression()
+   if self:is_value() and primary:type() == "constructor_expression" then
+      return primary:index(key)
+   end
+
+   error(string.format("cannot index into this expression (primary: '%s')", primary and primary[1] or "<none>"))
+end
 
 mt.member_expression = {}
 function mt.member_expression.init(l_dot_or_colon, id)
@@ -730,6 +776,9 @@ function mt.member_expression:is_method()
 end
 function mt.member_expression:member()
    return self[3]
+end
+function mt.member_expression:name()
+   return self[2].value .. self[3].value
 end
 
 mt.index_expression = {}
@@ -782,12 +831,22 @@ function mt.suffixed_expression:name()
    end
 
    if found[1] == "member_expression" then
-      return found:member().value
+      return found:member()
    elseif found[1] == "leaf" then
-      return found.value
+      return found
    end
 
    return nil
+end
+function mt.suffixed_expression:full_name()
+   local found = self:primary_expression().value
+   for i=3,#self do
+      if non_name[self[i][1]] then
+         break
+      end
+      found = found .. self[i]:name()
+   end
+   return found
 end
 function mt.suffixed_expression:is_method()
    local last = self:last_child()
@@ -1029,7 +1088,7 @@ function mt.expression_list:insert_node(expr, i)
    local Codegen = require("kotaro.parser.codegen")
 
    if type(expr) == "string" then
-      expr = Codegen.gen_expression(expr)
+      expr = Codegen.gen_expression_from_code(expr)
    end
 
    expr:set_prefix(" ")
@@ -1101,7 +1160,7 @@ end
 function mt.constructor_expression:at(i)
    return self[i*2+1]
 end
-function mt.constructor_expression:count(i)
+function mt.constructor_expression:count()
    if #self == 3 then
       return 0
    end
@@ -1137,7 +1196,7 @@ function mt.constructor_expression:index(key)
          end
       end
    else
-      local cst = Codegen.gen_expression_from_value(key)
+      local cst = Codegen.gen_expression(key)
 
       for i, child in self:iter_children() do
          if child:type() == "key_value_pair" then
@@ -1151,7 +1210,7 @@ function mt.constructor_expression:index(key)
                -- (usually suffixed_expression). in this case there
                -- will only be a single suffix, which is a leaf of
                -- type ident, so compare using it instead.
-               local ident_leaf = cst:primary_expression()
+               local ident_leaf = cst:primary_expression():name()
                eq = key_node:eq_by_value(ident_leaf)
             else
                error("unknown key " .. tostring(key_node))
@@ -1169,10 +1228,10 @@ end
 function mt.constructor_expression:modify_index(key, expr)
    local Codegen = require("kotaro.parser.codegen")
 
-   local is_expression = expr == nil or (type(expr) == "table" and expr[1] == "expression")
+   local is_expression = expr == nil or type(expr) == "string" or (type(expr) == "table" and expr[1] == "expression")
 
    if not is_expression then
-      expr = Codegen.gen_expression_from_value(expr)
+      expr = Codegen.gen_expression(expr)
    end
 
    local _, child_index = self:index(key)
@@ -1184,7 +1243,7 @@ function mt.constructor_expression:modify_index(key, expr)
          if child:type() == "key_value_pair" then
             child:set_value(expr)
          elseif child:type() == "expression" then
-            child:replace_with(expr)
+            child:set_value(expr)
          else
             error("invalid constructor entry " .. child:type())
          end
@@ -1211,6 +1270,23 @@ function mt.constructor_expression:keys()
 
    return keys
 end
+function mt.constructor_expression:evaluate(scope)
+   local result = {}
+   local ind = 1
+   for _, child in self:iter_children() do
+      if child:type() == "key_value_pair" then
+         local key_node = child:key()
+         local value_node = child:value()
+         result[key_node:evaluate(scope)] = value_node:evaulate(scope)
+      elseif child:type() == "expression" then
+         result[ind] = child:evaluate(scope)
+         ind = ind + 1
+      else
+         error("unknown constructor item " .. child:type())
+      end
+   end
+   return result
+end
 
 mt.function_parameters_and_body = {}
 function mt.function_parameters_and_body.init(l_lparen, params, l_rparen, body)
@@ -1231,17 +1307,14 @@ function mt.leaf.init(_type, value, prefix, line, column)
       [1] = "leaf",
       leaf_type = _type,
       value = value,
-      _prefix = prefix or {},
+      _prefix = prefix or "",
       line = line or -1,
       column = column or -1,
+      offset = -1,
    }
 end
 function mt.leaf:prefix_to_string()
-   local prefix = ""
-   for _, v in ipairs(self._prefix) do
-      prefix = prefix .. v.Data
-   end
-   return prefix
+   return self._prefix
 end
 function mt.leaf:as_string(no_whitespace)
    if no_whitespace then
@@ -1253,6 +1326,17 @@ end
 function mt.leaf:prefix()
    return self._prefix
 end
+function mt.leaf:calc_ident()
+   local indent = 0
+   for c in string.gmatch(self._prefix) do
+      if c ~= " " then
+         indent = 0
+      else
+         indent = indent + 1
+      end
+   end
+   return string.rep(" ", indent)
+end
 function mt.leaf:set_prefix(prefix)
    if type(prefix) == "string" then
       local Codegen = require("kotaro.parser.codegen")
@@ -1263,7 +1347,8 @@ function mt.leaf:set_prefix(prefix)
    return self
 end
 function mt.leaf:eq_by_value(other)
-   return self[1] == other[1]
+   return other
+      and self[1] == other[1]
       and self.leaf_type == other.leaf_type
       and self.value == other.value
 end
@@ -1332,6 +1417,17 @@ function mt.leaf:set_value(val)
    new:set_prefix(self:prefix_to_string())
 
    self:replace_with(new)
+end
+function mt.leaf:string_value()
+   if self.leaf_type == "Ident" or self.leaf_type == "String" then
+      return self.value
+   end
+
+   return nil
+end
+function mt.leaf:__tostring()
+   return string.format("%s(%s) [line=%d, column=%d, offset=%d, prefix='%s']",
+                        string.upper(self.leaf_type), utils.quote_string(tostring(self.value)), self.line, self.column, self.offset, utils.escape_string(self:prefix_to_string()))
 end
 
 for k, v in pairs(mt) do

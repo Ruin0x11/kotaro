@@ -20,6 +20,7 @@ rewrite:option("-f --output-format", "Output format.", "code")
 rewrite:flag("--editor-params", "Output editor-consumable parameter list.")
 rewrite:flag("--editor-target-files", "Output editor-consumable list of files that might be changed.")
 rewrite:option("-p --param", "Parameters to pass to the rewrite."):count("*")
+rewrite:option("--ast-node", "AST node at point to rewrite of form 'offet,line,column'.")
 rewrite:argument("rewrite_name", "Rewrite file."):args("1")
 rewrite:argument("input_files", "Input files."):args("*")
 
@@ -140,7 +141,7 @@ local function output_result(result, file, output, args)
          out = get_output_stream(result.file)
       end
 
-      kotaro.output_ast_as_code(result.after, out)
+      out:write(result.after:as_code())
 
       if in_place then
          out:close()
@@ -149,7 +150,7 @@ local function output_result(result, file, output, args)
       local a = result.before:as_code()
       local b = result.after:as_code()
 
-      local r = replacements:new()
+      local r = replacements:new(result.offset)
       r:diff(a, b, file)
       r:write(out)
    elseif output_format == "ast" then
@@ -163,7 +164,7 @@ local function rewrite(args)
    local output = io.stdout
 
    local chunk, err = loadfile(args.rewrite_name)
-   if not chunk then error(chunk) end
+   if not chunk then error(err) end
 
    local ok, rewrite = xpcall(chunk, debug.traceback)
    if not ok then
@@ -181,6 +182,10 @@ local function rewrite(args)
    -- broken by passing in arbitrary strings.
    for name, param in pairs(params) do
       assert_is_ident(name)
+      if type(param) == "string" then
+         param = { type = param }
+         params[name] = param
+      end
       for k, v in pairs(param) do
          assert_is_ident(k)
          assert_is_ident(v)
@@ -204,6 +209,15 @@ local function rewrite(args)
       return
    end
 
+   local ast_node
+   if args.ast_node then
+      local kind, line, column = string.match(args.ast_node, "^(.+),(%d+),(%d+)$")
+      if not (kind and line and column) then
+         format_error("invalid node line/column/type '%s'", args.ast_node)
+      end
+      ast_node = { line = tonumber(line), column = tonumber(column), kind = kind }
+   end
+
    local values = parse_params(params, args.param)
 
    local opts = {
@@ -211,8 +225,12 @@ local function rewrite(args)
       output_file = args.output
    }
    local input_files = args.input_files
-   if rewrite.determine_input_files then
+   if not ast_node and rewrite.determine_input_files then
       input_files = rewrite:determine_input_files(values, opts)
+   end
+
+   if ast_node and #input_files ~= 1 then
+      format_error("--ast-node must be used with exactly one input file")
    end
 
    if args.editor_target_files then
@@ -247,16 +265,31 @@ local function rewrite(args)
          format_error("Error parsing Lua source:\n%s", err)
       end
 
-      local new = ast:clone()
-      new:changed()
+      local offset = 0
 
-      local after = rewrite:execute(new, values, opts)
+      if ast_node then
+         ast = ast:find_child_of_type_at_loc(ast_node.line, ast_node.column, ast_node.kind)
 
-      if after then
-         result[file] = {
-            before = ast,
-            after = after
-         }
+         if ast then
+            offset = ast:first_leaf().offset
+            ast = ast:clone(true)
+         end
+      end
+
+      if ast then
+         local new = ast:clone()
+         new:changed()
+
+         local after = rewrite:execute(new, values, opts)
+         assert(after)
+
+         if after then
+            result[file] = {
+               before = ast,
+               after = after,
+               offset = offset
+            }
+         end
       end
    end
 
@@ -266,7 +299,9 @@ local function rewrite(args)
 
    for _, file in ipairs(input_files) do
       local file_result = result[file]
-      output_result(file_result, file, output, args)
+      if file_result then
+         output_result(file_result, file, output, args)
+      end
    end
 end
 

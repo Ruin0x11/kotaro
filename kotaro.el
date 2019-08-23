@@ -56,7 +56,7 @@
 (defcustom kotaro-default-application "/home/ruin/build/work/kotaro/bin/kotaro" ; "kotaro"
   "The default location of the kotaro script.")
 
-(defcustom kotaro-rewrite-files-dir "/home/ruin/build/work/kotaro/"
+(defcustom kotaro-rewrite-files-dir "/home/ruin/build/work/kotaro/rewrite/"
   "Directory containing kotaro rewrite files.")
 
 (defun kotaro--make-params-from-alist (alist)
@@ -71,13 +71,17 @@
 (defun kotaro--run-kotaro (args)
   (with-current-buffer (get-buffer-create "*kotaro*")
     (delete-region (point-min) (point-max))
-    (let ((result (apply 'call-process kotaro-default-application nil
-                         (current-buffer)
-                         nil
-                         args)))
-      (if (equal 0 result)
-          (buffer-string)
-        (error "Process kotaro returned error, see buffer %s for details" (buffer-name))))))
+    (let ((default-directory (file-name-directory
+                              (directory-file-name kotaro-rewrite-files-dir))))
+
+      (let ((result (apply 'call-process lua-default-application nil
+                           (current-buffer)
+                           nil
+                           (append (list kotaro-default-application) args))))
+        (if (equal 0 result)
+            (buffer-string)
+          (progn
+            (error "Process kotaro returned error, see buffer %s for details" (buffer-name))))))))
 
 (defun kotaro--run-kotaro-rewrite (rewrite-file input-files params &optional args)
   "Run kotaro rewrite with REWRITE-FILE on INPUT-FILES with PARAMS.
@@ -146,8 +150,9 @@ Returns a string with the process output from running kotaro."
                 ("string" (read-string (format "param '%s' (string): " name)))
                 ("number" (read-number (format "param '%s' (number): " name)))
                 ("boolean" (yes-or-no-p (format "param '%s' (boolean)" name)))
-                (else (error "unknown param type '%s' (for '%s')" type name)))))
-    (cons name (prin1-to-string val))))
+                (else (error "unknown param type '%s' (for '%s')" type name))))
+         (newval (if (stringp val) val (prin1-to-string val))))
+    (cons name newval)))
 
 (defun kotaro--read-params (rewrite-file)
   (let* ((stdout (kotaro--read-required-params rewrite-file))
@@ -209,7 +214,7 @@ PROPS is a plist of properties and values to add to the overlay."
   (-let (((&hash "offset" "length" "content") edit))
     (kotaro--make-overlay offset (+ offset length) 'kotaro-change
                               'face 'kotaro-diff-removed
-                              'after-string (propertize
+                              'before-string (propertize
                                              (kotaro--unescape-string content)
                                              'face 'kotaro-diff-added))))
 
@@ -223,6 +228,15 @@ PROPS is a plist of properties and values to add to the overlay."
 
 (defun kotaro--remove-edit-overlays ()
   (remove-overlays nil nil 'kotaro-temporary t))
+
+(defun kotaro--reindent-edit-range (edits)
+  (let* ((min (-min-by (lambda (a b) (> (gethash "offset" a) (gethash "offset" b))) edits))
+         (max (-max-by (lambda (a b)
+                         (> (+ (gethash "offset" a) (gethash "length" a))
+                          (+ (gethash "offset" b) (gethash "length" b)))) edits)))
+    (indent-region
+     (gethash "offset" min)
+     (+ (gethash "offset" max) (gethash "length" max) 1))))
 
 (defun kotaro--apply-edits (edits)
   ; Sort text edits so as to apply edits that modify latter parts of
@@ -283,6 +297,27 @@ PROPS is a plist of properties and values to add to the overlay."
                     (list (buffer-file-name))
                     params
                     '("--output-format" "edit_list")))
+           (edits (kotaro--parse-edit-list stdout)))
+      (kotaro--start-rewrite-query edits))))
+
+(defun kotaro-rewrite-expression-at-point (rewrite-file)
+  (interactive (list (kotaro--pick-rewrite-file)))
+  (kotaro--clear-edits)
+  (let* ((params (kotaro--read-params rewrite-file))
+         (our-files (list (buffer-file-name)))
+         (files (kotaro--get-target-files rewrite-file our-files params)))
+    ;; ensure the files on disk are updated so nothing gets out of
+    ;; sync
+    (mapc 'kotaro--save-buffer-file files)
+    (let* ((line (line-number-at-pos (point)))
+           (column (current-column))
+           (stdout (kotaro--run-kotaro-rewrite
+                    rewrite-file
+                    (list (buffer-file-name))
+                    params
+                    (list
+                     "--output-format" "edit_list"
+                     "--ast-node" (format "%s,%d,%d" "expression" line column))))
            (edits (kotaro--parse-edit-list stdout)))
       (kotaro--start-rewrite-query edits))))
 
