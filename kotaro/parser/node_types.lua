@@ -758,7 +758,7 @@ function mt.expression:modify_index(key, expr)
 
    error(string.format("cannot index into this expression (primary: '%s')", primary and primary[1] or "<none>"))
 end
-function mt.expression:modify_index(key)
+function mt.expression:index(key)
    local primary = self:primary_expression()
    if self:is_value() and primary:type() == "constructor_expression" then
       return primary:index(key)
@@ -1129,6 +1129,14 @@ function mt.key_value_pair:set_value(value)
    value:set_prefix(" ")
    self[4]:replace_with(value)
 end
+function mt.key_value_pair:set_key(key)
+   key:set_prefix("\n      ")
+   local old_key = self[2]
+   if old_key[1] == "constructor_key" then
+      old_key = old_key[3]
+   end
+   old_key:replace_with(key)
+end
 
 mt.constructor_expression = {}
 function mt.constructor_expression.init(l_lbracket, body, l_rbracket)
@@ -1225,7 +1233,7 @@ function mt.constructor_expression:index(key)
 
    return nil
 end
-function mt.constructor_expression:modify_index(key, expr)
+function mt.constructor_expression:modify_index(key, expr, new_key, after)
    local Codegen = require("kotaro.parser.codegen")
 
    local is_expression = expr == nil or type(expr) == "string" or (type(expr) == "table" and expr[1] == "expression")
@@ -1247,10 +1255,13 @@ function mt.constructor_expression:modify_index(key, expr)
          else
             error("invalid constructor entry " .. child:type())
          end
+         if new_key then
+            child:set_key(Codegen.gen_expression(new_key))
+         end
       end
    else
       local kv_pair = Codegen.gen_key_value_pair(key, expr)
-      self:insert_node(kv_pair)
+      self:insert_node(kv_pair, after or nil)
    end
 
    return expr

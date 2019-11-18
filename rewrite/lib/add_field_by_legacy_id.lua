@@ -20,7 +20,8 @@ function add_field_by_legacy_id:execute(node)
    local tbl = self.items[id]
    local Codegen = require("kotaro.parser.codegen")
    local expr = Codegen.gen_expression(tbl)
-   node:modify_index(self.field, expr)
+   local _, after = node:index(self.legacy_id)
+   node:modify_index(self.field, expr, nil, after + 1)
 end
 
 return function(ast, legacy_id, field, items)
