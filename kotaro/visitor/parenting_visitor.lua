@@ -3,10 +3,16 @@ local visitor = require("kotaro.visitor")
 local parenting_visitor = {}
 
 function parenting_visitor:new(parent)
-   return setmetatable({ current_parent = parent }, { __index = parenting_visitor })
+   return setmetatable({ prev_leaf = nil, current_parent = parent }, { __index = parenting_visitor })
 end
 
 function parenting_visitor:visit_leaf(node)
+   if self.prev_leaf then
+      node.prev_token = self.prev_leaf
+      self.prev_leaf.next_token = node
+   end
+   self.prev_leaf = node
+
    node.parent = self.current_parent
 end
 

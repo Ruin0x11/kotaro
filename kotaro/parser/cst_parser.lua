@@ -106,31 +106,35 @@ function cst_parser:parse_parenthesized_expression()
 
    if not l_rparen then return false, self:generate_error("`)` expected") end
 
-   return true, NodeTypes.parenthesized_expression(l_lparen, expr, l_rparen)
-end
+   local paren = NodeTypes.parenthesized_expression(l_lparen, expr, l_rparen)
 
-function cst_parser:parse_suffixed_primary_expression()
-   local st, expr
-
-   if self.lexer:tokenIsSymbol("(") then
-      st, expr = self:parse_parenthesized_expression()
-      if not st then return st, expr end
-   elseif self.lexer:tokenIs("Ident") then
-      local id = self.lexer:consumeToken()
-
-      expr = id
+   -- if there is an index or call statement directly after this
+   -- expression, wrap a suffixed expression around it.
+   --
+   -- (a or b):method()
+   if self.lexer:tokenIsSymbol(":")
+      or self.lexer:tokenIsSymbol(".")
+      or self.lexer:tokenIsSymbol("(")
+      or self.lexer:tokenIsSymbol("[")
+      or self.lexer:tokenIs("String")
+      or self.lexer:tokenIsSymbol("{")
+   then
+      return self:parse_suffixed_expression("all", paren)
    end
 
-   return true, expr
+   return true, paren
 end
 
-function cst_parser:parse_suffixed_expression(mode)
-   if not self.lexer:tokenIs("Ident") then
-      return true, NodeTypes.suffixed_expression({})
-   end
+function cst_parser:parse_suffixed_expression(mode, primary)
+   if primary == nil then
+      if not self.lexer:tokenIs("Ident") then
+         -- Return a blank expression for zero-argument function
+         -- calls.
+         return true, NodeTypes.suffixed_expression({})
+      end
 
-   local primary = self.lexer:consumeToken()
-   assert(primary.leaf_type == "Ident")
+      primary = self.lexer:consumeToken()
+   end
 
    local expr
    local exprs = { primary }
@@ -673,7 +677,7 @@ function cst_parser:parse_repeat_block()
    local st, cond = self:parse_expression()
    if not st then return false, cond end
 
-   return true, NodeTypes.repeat_statement(l_repeat, block, l_until, cond)
+   return true, NodeTypes.repeat_block(l_repeat, block, l_until, cond)
 end
 
 function cst_parser:parse_function_declaration()

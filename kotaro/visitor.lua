@@ -9,6 +9,10 @@ end
 local visitor = {}
 
 function visitor.visit_node(v, node, visit)
+   if node[1] == "leaf" then
+      return v:visit_leaf(node)
+   end
+
    local child = node[2]
 
    while child do

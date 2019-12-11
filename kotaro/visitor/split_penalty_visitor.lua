@@ -1,16 +1,13 @@
 local tree_utils = require("kotaro.parser.tree_utils")
+local split_penalty = require ("kotaro.split_penalty")
 
 local split_penalty_visitor = {}
-
-local penalties = {
-   unbreakable = 1000 * 1000
-}
 
 local function set_penalty(node, penalty)
    local leaf = node:first_leaf()
    if not leaf then return end
 
-   leaf.split_penalty = penalties[penalty]
+   leaf.split_penalty = split_penalty[penalty]
 end
 
 local function set_spaces_before(node, spaces_before)
@@ -71,6 +68,7 @@ function split_penalty_visitor:new()
    return setmetatable({}, { __index = split_penalty_visitor })
 end
 function split_penalty_visitor:visit_leaf(node)
+   node.split_penalty = node.split_penalty or 0
 end
 function split_penalty_visitor:visit_node(node, visit)
    local n = "visit_" .. node:type()

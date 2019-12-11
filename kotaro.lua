@@ -1,9 +1,9 @@
 local code_convert_visitor = require("kotaro.visitor.code_convert_visitor")
 local rewriting_visitor = require("kotaro.visitor.rewriting_visitor")
 local parenting_visitor = require("kotaro.visitor.parenting_visitor")
-local parenting_visitor = require("kotaro.visitor.parenting_visitor")
 local split_penalty_visitor = require("kotaro.visitor.split_penalty_visitor")
 local reformatting_visitor = require("kotaro.visitor.reformatting_visitor")
+local identify_containers_visitor = require("kotaro.visitor.identify_containers_visitor")
 local visitor = require("kotaro.visitor")
 local utils = require("kotaro.utils")
 local cst_parser = require("kotaro.parser.cst_parser")
@@ -109,6 +109,7 @@ local function edit_src(src, cb, opts)
 end
 
 local function format_cst(cst)
+   visitor.visit(identify_containers_visitor:new(), cst)
    visitor.visit(split_penalty_visitor:new(), cst)
    visitor.visit(reformatting_visitor:new(), cst)
 end

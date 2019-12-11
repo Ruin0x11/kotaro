@@ -80,7 +80,7 @@ end
 
 function base_mt:first_child()
    local c = self:children()
-   return c[#c]
+   return c[1]
 end
 
 function base_mt:last_child()
@@ -230,11 +230,6 @@ function base_mt:prefix_to_string()
    return nil
 end
 
-function base_mt:was_split()
-   local leaf = self:first_leaf()
-   return leaf and leaf:was_split()
-end
-
 -- Reconnect all parent-child relationships for this node's parent and
 -- line numbers for the rest of the file.
 function base_mt:changed()
@@ -371,6 +366,9 @@ function base_mt:find_parent_of_type(_type)
 end
 
 function base_mt:rewrite(rewrite)
+   if rewrite.applies_to_root and not rewrite:applies_to_root(self) then
+      return self
+   end
    local rf = rewriting_visitor:new({rewrite})
    visitor.visit(rf, self)
    rf:do_rewrite()
@@ -384,15 +382,18 @@ function base_mt:__tostring()
                            self[1], #self-1)
 end
 
-function base_mt:dump()
-   local string_io = {
+function base_mt:dump(stream)
+   stream = stream or {
       stream = "",
       write = function(self, s)
          self.stream = self.stream .. s
       end
    }
-   tree_utils.dump(self, string_io)
-   return string_io.stream
+   tree_utils.dump(self, stream)
+   if stream.stream then
+      stream = stream.stream
+   end
+   return stream
 end
 
 function base_mt:as_code(params)
@@ -431,7 +432,7 @@ function mt.program.init(children, l_eof)
    return { "program", children, l_eof }
 end
 function mt.program:children()
-   return self[2]
+   return { self[2] }
 end
 
 mt.if_block = {}
@@ -439,13 +440,7 @@ function mt.if_block.init(nodes)
    return { "if_block", unpack(nodes) }
 end
 function mt.if_block:children()
-   local c = {}
-   for _, v in ipairs(self[2]) do
-      if not v[1] == "leaf" then
-         c[#c+1] = v
-      end
-   end
-   return c
+   return { self[3], self[5] }
 end
 
 mt.while_block = {}
@@ -453,15 +448,15 @@ function mt.while_block.init(l_while, cond, l_do, children, l_end)
    return { "while_block", l_while, cond, l_do, children, l_end }
 end
 function mt.while_block:children()
-   return self[4]
+   return { self[4] }
 end
 
 mt.do_block = {}
 function mt.do_block.init(l_do, children, l_end)
    return { "do_block", l_do, children, l_end }
 end
-function mt.while_block:children()
-   return self[3]
+function mt.do_block:children()
+   return { self[3] }
 end
 
 mt.numeric_for_range = {}
@@ -492,9 +487,9 @@ function mt.for_block:children()
    return self[5]
 end
 
-mt.repeat_statement = {}
-function mt.repeat_statement.init(l_repeat, children, l_until, cond)
-   return { "repeat_statement", l_repeat, children, l_until, cond }
+mt.repeat_block = {}
+function mt.repeat_block.init(l_repeat, children, l_until, cond)
+   return { "repeat_block", l_repeat, children, l_until, cond }
 end
 
 mt.function_declaration = {}
@@ -663,6 +658,9 @@ mt.expression = {}
 function mt.expression.init(ops_and_numbers)
    return { "expression", unpack(ops_and_numbers) }
 end
+function mt.expression:children()
+   return all_but_first(self)
+end
 function mt.expression:is_value()
    return #self == 2
 end
@@ -674,6 +672,15 @@ function mt.expression:is_binary()
 end
 function mt.expression:is_simple()
    return self:is_value() and self[2]:type() == "leaf"
+end
+function mt.expression:is_dots()
+   return self:is_simple() and self[2].leaf_type == "Symbol" and self[2]:raw_value() == "..."
+end
+function mt.expression:is_function_call()
+   if not (self:is_value() and self[2]:type() == "suffixed_expression") then
+      return false
+   end
+   return self[2]:is_function_call()
 end
 function mt.expression:lhs()
    if self:is_unary() then
@@ -749,6 +756,14 @@ function mt.expression:evaluate(scope)
    end
 
    error(string.format("invalid binary operator '%s'", op))
+end
+function mt.expression:insert_node(kv_pair, i)
+   local primary = self:primary_expression()
+   if self:is_value() and primary:type() == "constructor_expression" then
+      return primary:modify_index(kv_pair, i)
+   end
+
+   error(string.format("cannot index into this expression (primary: '%s')", primary and primary[1] or "<none>"))
 end
 function mt.expression:modify_index(key, expr)
    local primary = self:primary_expression()
@@ -915,6 +930,9 @@ function mt.suffixed_expression:is_function_call()
 
    return false
 end
+function mt.suffixed_expression:is_single_ident()
+   return #self == 2
+end
 function mt.suffixed_expression:primary_expression()
    return self[2]
 end
@@ -922,6 +940,7 @@ function mt.suffixed_expression:nonprimary_expressions()
    return all_but_first(self, 2)
 end
 function mt.suffixed_expression:evaluate(scope)
+   scope = scope or {}
    if #self == 2 then
       -- lookup in scope as name
       return scope[self:primary_expression().value]
@@ -1022,7 +1041,11 @@ function mt.ident_list.init(idents)
    return { "ident_list", unpack(idents) }
 end
 function mt.ident_list:children()
-   return all_but_first(self)
+   local c = {}
+   for i=2,#self,2 do
+      c[#c+1] = self[i]
+   end
+   return c
 end
 function mt.ident_list:remove(i)
    return remove_in_comma_list(self, i)
@@ -1349,13 +1372,20 @@ function mt.leaf:calc_ident()
    return string.rep(" ", indent)
 end
 function mt.leaf:set_prefix(prefix)
-   if type(prefix) == "string" then
-      local Codegen = require("kotaro.parser.codegen")
-      prefix = Codegen.make_prefix(prefix)
-   end
    assert(prefix)
    self._prefix = prefix
    return self
+end
+function mt.leaf:add_prefix(newlines_before, spaces, indent_level, config)
+   indent_level = indent_level or 0
+   local ind = string.rep(" " , indent_level)
+   local indent_before = string.rep(ind, config.indent_width) .. string.rep(" ", spaces)
+   if self.leaf_type == "Comment" then
+   end
+   self._prefix = string.rep("\n", newlines_before) .. indent_before
+end
+function mt.leaf:adjust_newlines_before(newlines_before)
+   self._prefix = string.rep("\n", newlines_before) + string.gsub(self._prefix, "^\n*", "")
 end
 function mt.leaf:eq_by_value(other)
    return other
@@ -1365,14 +1395,6 @@ function mt.leaf:eq_by_value(other)
 end
 function mt.leaf:raw_value()
    return self.value
-end
-function mt.leaf:was_split()
-   for _, v in ipairs(self._prefix) do
-      if v.Data == "\n" then
-         return true
-      end
-   end
-   return false
 end
 function mt.leaf:prefix_offsets()
    local line = 0

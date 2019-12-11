@@ -24,6 +24,9 @@ rewrite:option("--ast-node", "AST node at point to rewrite of form 'offet,line,c
 rewrite:argument("rewrite_name", "Rewrite file."):args("1")
 rewrite:argument("input_files", "Input files."):args("*")
 
+local dump = parser:command("dump", "Dump source code AST.")
+dump:argument("input_files", "Input files."):args("*")
+
 local function format_error(str, ...)
    error(string.format(str, ...))
 end
@@ -224,6 +227,7 @@ local function rewrite(args)
       input_files = args.input_files,
       output_file = args.output
    }
+
    local input_files = args.input_files
    if not ast_node and rewrite.determine_input_files then
       input_files = rewrite:determine_input_files(values, opts)
@@ -305,8 +309,30 @@ local function rewrite(args)
    end
 end
 
+local function dump(args)
+   local input_files = args.input_files
+
+   for _, file in ipairs(input_files) do
+      local input = get_input_stream(file)
+
+      -- TODO: refactor lexer to take IO stream instead of the entire
+      -- source string
+      local src = input:read('*all')
+      input:close()
+
+      local ast, err = kotaro.source_to_ast(src, file)
+      if err then
+         error(err)
+      end
+      dump_ast(io.stdout, ast)
+   end
+end
+
 local args = parser:parse()
 
 if args.rewrite then
    rewrite(args)
+end
+if args.dump then
+   dump(args)
 end

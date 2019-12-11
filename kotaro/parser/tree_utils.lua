@@ -1,5 +1,6 @@
 local visitor = require("kotaro.visitor")
 local print_visitor = require("kotaro.visitor.print_visitor")
+local utils = require("kotaro.utils")
 local tree_utils = {}
 
 function tree_utils.dump(node, stream)
@@ -19,6 +20,22 @@ end
 
 function tree_utils.each_leaf(node, cb, ...)
    visitor.visit(leaf_mutator_visitor:new(cb, ...), node)
+end
+
+local OPEN_SYMBOLS = utils.set {
+   "(", "[", "{", "do", "repeat", "then", "else"
+}
+
+local CLOSE_SYMBOLS = utils.set {
+   ")", "]", "}", "end", "until"
+}
+
+function tree_utils.opens_scope(token)
+   return OPEN_SYMBOLS[token.value] or token.is_function_start
+end
+
+function tree_utils.closes_scope(token)
+   return CLOSE_SYMBOLS[token.value]
 end
 
 return tree_utils

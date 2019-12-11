@@ -8,6 +8,19 @@ end
 
 local step = 3
 
+local function was_split(node)
+   if not node:is_leaf() then
+      return was_split(node:first_leaf())
+   end
+
+   for _, v in ipairs(node._parsed_prefix) do
+      if v.Data == "\n" then
+         return true
+      end
+   end
+   return false
+end
+
 function reformatting_visitor:new()
    return setmetatable({ indent = 0, line = 1, column = 0, first = true }, { __index = reformatting_visitor })
 end
@@ -17,7 +30,7 @@ function reformatting_visitor:visit_leaf(node)
    if do_split and false then
       split_and_indent(node, self.indent)
    else
-      local spaces = node.spaces_before or 1
+      local spaces = node.spaces_before or 0
       node:set_prefix(string.rep(" ", spaces))
 
       if node.is_last_leaf_of_statement then
@@ -29,7 +42,7 @@ function reformatting_visitor:visit_leaf(node)
       end
    end
 
-   for _, c in ipairs(node:prefix()) do
+   for _, c in ipairs(node._parsed_prefix) do
       if c.Data == "\n" then
          self.line = self.line + 1
          self.column = 0
@@ -52,7 +65,7 @@ function reformatting_visitor:visit_node(node, visit)
          indent = self.indent + step
       end
    elseif node.trailer_start then
-      if node.trailer_head:was_split() then
+      if was_split(node.trailer_head) then
          indent = node.trailer_start:left_boundary() + step
       else
          indent = node.trailer_start:right_boundary()
