@@ -4,17 +4,19 @@ local visitor = require("kotaro.visitor")
 local identify_containers_visitor = require("kotaro.visitor.identify_containers_visitor")
 local split_penalty_visitor = require("kotaro.visitor.split_penalty_visitor")
 local kotaro = require("kotaro")
+local utils = require("kotaro.utils")
+local ansicolors = require("ansicolors")
 
 local CONFIG = {
    indent_width = 3,
    column_limit = 40,
    continuation_indent_width = 2,
-   split_penalty_excess_character = 2,
-   split_penalty_for_added_line_split = 2,
+   split_penalty_excess_character = 7000,
+   split_penalty_for_added_line_split = 30,
    split_penalty_after_opening_bracket = 10,
-   split_penalty_logical_operator = 10,
-   split_penalty_bitwise_operator = 10,
-   split_penalty_after_unary_operator = 1000,
+   split_penalty_logical_operator = 300,
+   split_penalty_bitwise_operator = 300,
+   split_penalty_after_unary_operator = 10000,
 }
 
 local function read_to_string(file)
@@ -41,7 +43,53 @@ local function make_test(path)
    assert(source and target)
 
    return function()
-      assert.same(target, reformat(source))
+      assert.same_string(target, reformat(source))
+   end
+end
+
+function assert.same_string(str1, str2)
+   local lines = "\n"
+   local spl1 = utils.split_string(str1, "\n")
+   local spl2 = utils.split_string(str2, "\n")
+   local len = math.max(#spl1, #spl2)
+   local failed = false
+   local buf = {}
+
+   local function print_buf()
+      for _, l in ipairs(buf) do
+         lines = lines .. string.format(ansicolors("%{red}- %s%{reset}\n"), l)
+      end
+      buf = {}
+   end
+
+   for i = 1, len do
+      local a = spl1[i]
+      local b = spl2[i]
+
+      if a ~= b then
+         failed = true
+         if a ~= nil then
+            lines = lines .. string.format(ansicolors("%{green}+ %s%{reset}\n"), a)
+            if b ~= nil then
+               buf[#buf+1] = b
+            end
+         else
+            print_buf()
+            if b ~= nil then
+               lines = lines .. string.format(ansicolors("%{red}- %s%{reset}\n"), b)
+            end
+         end
+      else
+         print_buf()
+         lines = lines .. string.format("  %s\n", b)
+      end
+   end
+
+   print_buf()
+
+   if failed then
+      print(str1, str2)
+      error("Expected output differs:".. lines)
    end
 end
 
@@ -54,6 +102,8 @@ describe("formatter", function()
             end
 
             it("parses dood", function()
-                  print(reformat(read_to_string("/home/ruin/build/elona-next/src/api/Rand.lua")))
+                  local conf = utils.deepcopy(CONFIG)
+                  conf.column_limit = 80
+                  print(reformat(read_to_string("/home/ruin/build/elona-next/src/api/chara/IChara.lua"), conf))
             end)
 end)

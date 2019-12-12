@@ -2,20 +2,14 @@ local fun = require("fun")
 local format_state = require("kotaro.format_state")
 local priority_queue = require("kotaro.priority_queue")
 local class = require("pl.class")
-local tablex = require("pl.tablex")
+local utils = require("kotaro.utils")
+
 local reformatter = {}
 
 -- most of this is just ported from yapf's reformatter.py
 
 local function count_chars(str, pattern)
    return select(2, string.gsub(str, pattern, ""))
-end
-
-local function split(str, sep)
-   local fields = {}
-   local pattern = string.format("([^%s]+)", sep)
-   string.gsub(str, pattern, function(c) fields[#fields+1] = c end)
-   return fields
 end
 
 local function intersection(a, b)
@@ -114,7 +108,7 @@ local function retain_horizontal_spacing(uwline, config)
       end
 
       if cur_lineno ~= prev_lineno then
-         node.spaces_required_before = node.column - first_column + depth + config.indent_width
+         node.spaces_required_before = node.column - first_column + depth * config.indent_width
          return
       end
 
@@ -123,7 +117,7 @@ local function retain_horizontal_spacing(uwline, config)
       local prev_len = string.len(prev.value)
 
       if prev_is_multiline_string then
-         local spl = split(node.value, "\n")
+         local spl = utils.split_string(node.value, "\n")
          prev_len = node.column + string.len(spl[#spl])
       end
 
@@ -131,7 +125,7 @@ local function retain_horizontal_spacing(uwline, config)
    end
 
    for _, tok in ipairs(uwline.tokens) do
-      retain(uwline.tokens[1].column, uwline.depth)
+      retain(tok, uwline.tokens[1].column, uwline.depth)
    end
 end
 
@@ -216,15 +210,18 @@ end
 local function add_next_state_to_queue(penalty, prev_node, do_newline, count, pqueue)
    local must_split = prev_node.state:calc_must_split()
    if do_newline and not prev_node.state:calc_can_split(must_split) then
+      -- print("nl",prev_node.state.next_node and prev_node.state.next_node.value,prev_node.state:hash())
       return count
    end
    if not do_newline and must_split then
+      -- print("nonl",prev_node.state.next_node and prev_node.state.next_node.value,prev_node.state:hash())
       return count
    end
 
    local node = { state = prev_node.state:clone(), newline = do_newline, prev_node = prev_node }
    penalty = penalty + node.state:add_token_to_state(do_newline, true, must_split)
    pqueue:enqueue(node, ordered_penalty(penalty, count))
+   -- print("append",node.state:hash(), node.state)
    return count + 1
 end
 
@@ -255,7 +252,6 @@ function string.tostring_raw(tbl)
    return s
 end
 local function analyze_solution_space(state)
-   print("============")
    local count = 0
    local seen = {}
    local pqueue = priority_queue("min")
@@ -288,11 +284,10 @@ local function analyze_solution_space(state)
    end
 
    if not found then
-      print("== no solution")
+      print("--------- no solution")
       return false
    end
 
-   print("== GET solution")
    reconstruct_path(state, node)
 
    return true
@@ -327,6 +322,7 @@ function reformatter.reformat(uwlines, lines, config)
    local prev_uwline = nil
 
    for _, uwline in ipairs(uwlines) do
+      print(uwline)
       local first_token = uwline.tokens[1]
       format_first_token(first_token, uwline.depth, prev_uwline, final_lines, config)
 
@@ -352,7 +348,7 @@ function reformatter.reformat(uwlines, lines, config)
       end
 
       if uwline.disabled then
-         retain_horizontal_spacing(uwline)
+         retain_horizontal_spacing(uwline, config)
          retain_required_vertical_spacing(uwline, prev_uwline, lines)
          emit_line_unformatted(state)
       elseif can_place_on_single_line(uwline, config) then
@@ -363,7 +359,7 @@ function reformatter.reformat(uwlines, lines, config)
          if not analyze_solution_space(state) then
             state = format_state(uwline, indent_amount, config)
             state:move_to_next_token()
-            retain_horizontal_spacing(uwline)
+            retain_horizontal_spacing(uwline, config)
             retain_required_vertical_spacing(uwline, prev_uwline, lines)
             emit_line_unformatted(state)
          end

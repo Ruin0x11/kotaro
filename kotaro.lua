@@ -58,8 +58,6 @@ function kotaro.source_to_ast(src, filename)
    local ok, cst = cst_parser(src, filename):parse()
    if not ok then return nil, cst end
 
-   cst:changed()
-
    return cst
 end
 

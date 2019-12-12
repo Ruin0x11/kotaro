@@ -4,24 +4,52 @@ local split_penalty = require ("kotaro.split_penalty")
 local split_penalty_visitor = {}
 
 local function set_penalty(node, penalty)
-   local leaf = node:first_leaf()
+   local leaf
+   if node:is_leaf() then
+      leaf = node
+   else
+      leaf = node:first_leaf()
+   end
    if not leaf then return end
 
    leaf.split_penalty = split_penalty[penalty]
+   assert(leaf.split_penalty)
+end
+
+local function increase_penalty(node, penalty)
+   local leaf
+   if node:is_leaf() then
+      leaf = node
+   else
+      leaf = node:first_leaf()
+   end
+   if not leaf then return end
+
+   leaf.split_penalty = (leaf.split_penalty or 0) + split_penalty[penalty]
 end
 
 local function set_spaces_before(node, spaces_before)
-   local leaf = node:first_leaf()
+   local leaf
+   if node:is_leaf() then
+      leaf = node
+   else
+      leaf = node:first_leaf()
+   end
    if not leaf then return end
 
-   leaf.spaces_before = spaces_before
+   leaf.spaces_required_before = spaces_before
 end
 
 local function set_must_split(node)
-   local leaf = node:first_leaf()
+   local leaf
+   if node:is_leaf() then
+      leaf = node
+   else
+      leaf = node:first_leaf()
+   end
    if not leaf then return end
 
-   leaf.split_penalty = 0
+   leaf.must_split = true
 end
 
 local function set_unbreakable(node, spaces_before)
@@ -59,19 +87,16 @@ local function add_trailer(node, start, finish)
       node[i].trailer_start = start_node
       node[i].trailer_head = head
    end
-
-   -- TODO: if anything in the trailer needs indenting, all nodes in
-   -- the trailer should be indented retroactively.
 end
 
 function split_penalty_visitor:new()
    return setmetatable({}, { __index = split_penalty_visitor })
 end
 function split_penalty_visitor:visit_leaf(node)
-   node.split_penalty = node.split_penalty or 0
 end
 function split_penalty_visitor:visit_node(node, visit)
    local n = "visit_" .. node:type()
+   print(n, node:as_code())
    if self[n] then
       self[n](self, node, visit)
    else
@@ -87,10 +112,10 @@ function split_penalty_visitor:visit_function_declaration(node, visit)
    local offset = 0
    if node:is_local() then
       set_must_split(node[2]) -- `local`
-      set_unbreakable(node[3]) -- `NAME`
+      set_unbreakable(node[3]) -- `function`
       offset = 1
    else
-      set_must_split(node[2]) -- `NAME`
+      set_must_split(node[2]) -- `function`
    end
    visit(self, node, visit)
    set_unbreakable_in_children(node[3+offset])
@@ -103,18 +128,46 @@ end
 
 function split_penalty_visitor:visit_parenthesized_expression(node, visit)
    node.is_block = true
+   set_penalty(node[3], "unbreakable")
+   set_penalty(node[#node], "unbreakable")
    visit(self, node, visit)
 end
 
 function split_penalty_visitor:visit_if_block(node, visit)
+   local prev = nil
    for _, v in node:iter_rest() do
-      -- indent clauses and bodies
-      if v:type() == "expression" or v:type() == "statement_list" then
-         v.is_block = true
+      if prev then
+         if prev.value == "if" or prev.value == "elseif" then
+            set_penalty(v, "unbreakable")
+         else
+            set_penalty(v, "strongly_connected")
+         end
       end
+      prev = v
    end
    visit(self, node, visit)
 end
+
+local OPERAND_PENALTIES = {
+   ["or"] = "or_test",
+   ["and"] = "and_test",
+   ["not"] = "not_test",
+   ["<"] = "comparison",
+   [">"] = "comparison",
+   ["<="] = "comparison",
+   [">="] = "comparison",
+   ["=="] = "comparison",
+   ["~="] = "comparison",
+   ["|"] = "or_expr",
+   ["&"] = "and_expr",
+   ["^"] = "xor_expr",
+   [".."] = "shift_expr",
+   ["+"] = "arith_expr",
+   ["-"] = "arith_expr",
+   ["/"] = "arith_expr",
+   ["*"] = "arith_expr",
+   ["#"] = "subscript",
+}
 
 function split_penalty_visitor:visit_expression(node, visit)
    visit(self, node, visit)
@@ -122,10 +175,14 @@ function split_penalty_visitor:visit_expression(node, visit)
    for i=2,#node do
       local this_node = node[i]
       local next_node = node[i+1]
-      if next_node then
-         if this_node.value == "and" or this_node.value == "not" then
-            set_unbreakable(next_node)
-         end
+      if this_node:is_leaf()
+         and (this_node.leaf_type == "Keyword" or this_node.leaf_type == "Symbol")
+      then
+         local penalty = OPERAND_PENALTIES[this_node.value]
+         assert(penalty, this_node.value)
+         increase_penalty(this_node, penalty)
+      else
+         increase_penalty(this_node, "term")
       end
    end
 end
@@ -138,8 +195,6 @@ function split_penalty_visitor:visit_assignment_statement(node, visit)
       set_must_split(node[2]) -- `local`
       set_unbreakable(node[3]) -- `IDENTS`
       offset = 1
-   else
-      set_must_split(node[2]) -- `IDENTS`
    end
    if node[3+offset] then
       set_unbreakable(node[3+offset]) -- `=`
@@ -156,13 +211,6 @@ function split_penalty_visitor:visit_key_value_pair(node, visit)
 end
 
 function split_penalty_visitor:visit_ident_list(node, visit)
-   for i=3,#node,2 do
-      set_unbreakable(node[i], 0) -- `,`
-   end
-   visit(self, node, visit)
-end
-
-function split_penalty_visitor:visit_expression_list(node, visit)
    for i=3,#node,2 do
       set_unbreakable(node[i], 0) -- `,`
    end
@@ -237,14 +285,15 @@ function split_penalty_visitor:visit_suffixed_expression(node, visit)
 end
 
 function split_penalty_visitor:visit_member_expression(node, visit)
-   node[2].spaces_before = 0 -- `.` / `:`
+   node[2].spaces_required_before = 0 -- `.` / `:`
+   set_penalty(node[2], "together")
    visit(self, node, visit)
    set_unbreakable(node[3], 0)
 end
 
 function split_penalty_visitor:visit_call_expression(node, visit)
    set_unbreakable(node[2], 0) -- `(`
-   node[3].is_block = true
+   set_penalty(node[3], "strongly_connected")
    visit(self, node, visit)
    set_spaces_before(node[4], 0)
    if node:arguments():count() > 0 then
@@ -256,12 +305,13 @@ end
 
 function split_penalty_visitor:visit_return_statement(node, visit)
    add_trailer(node, 2)
+   set_penalty(node[3], "strongly_connected")
    visit(self, node, visit)
 end
 
 function split_penalty_visitor:visit_statement_list(node, visit)
    if node[2] then
-      node[2].spaces_before = 1
+      node[2].spaces_required_before = 1
    end
 
    for i=2,#node do

@@ -932,7 +932,11 @@ function cst_parser:parse()
    assert(self.lexer:isEof())
    local l_eof = self.lexer:peekToken()
 
-   return true, NodeTypes.program(tree, l_eof)
+   local program = NodeTypes.program(tree, l_eof)
+
+   program:changed()
+
+   return true, program
 end
 
 return cst_parser

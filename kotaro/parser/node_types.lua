@@ -7,6 +7,11 @@ local tree_utils = require("kotaro.parser.tree_utils")
 local utils = require("kotaro.utils")
 local iterators = require("kotaro.iterators")
 
+local hash
+if jit then
+   hash = require("thirdparty.luaxxhash")
+end
+
 -- TODO: iterator instead of table
 local function all_but_first(tbl, n)
    n = n or 1
@@ -1347,6 +1352,15 @@ function mt.leaf.init(_type, value, prefix, line, column)
       offset = -1,
    }
 end
+function mt.leaf:hash()
+   return hash(string.format("%s%s%s%d%d%d",
+                             self.leaf_type,
+                             self.value,
+                             self._prefix,
+                             self.line,
+                             self.column,
+                             self.offset))
+end
 function mt.leaf:prefix_to_string()
    return self._prefix
 end
@@ -1385,7 +1399,14 @@ function mt.leaf:add_prefix(newlines_before, spaces, indent_level, config)
    self._prefix = string.rep("\n", newlines_before) .. indent_before
 end
 function mt.leaf:adjust_newlines_before(newlines_before)
-   self._prefix = string.rep("\n", newlines_before) + string.gsub(self._prefix, "^\n*", "")
+   self._prefix = string.rep("\n", newlines_before) .. string.gsub(self._prefix, "^\n*", "")
+end
+function mt.leaf:spaces_before()
+   local spl = utils.split_string(self._prefix, "\n")
+   if #spl == 0 then
+      return 0
+   end
+   return string.len(spl[#spl])
 end
 function mt.leaf:eq_by_value(other)
    return other

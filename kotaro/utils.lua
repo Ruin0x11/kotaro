@@ -134,4 +134,12 @@ function utils.string_buffer()
    return setmetatable({""}, { __index = string_buffer, __tostring = string_buffer.__tostring })
 end
 
+function utils.split_string(s, delimiter)
+   local result = {}
+   for match in (s..delimiter):gmatch("(.-)"..delimiter) do
+      table.insert(result, match)
+   end
+   return result
+end
+
 return utils

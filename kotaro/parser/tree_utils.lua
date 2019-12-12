@@ -31,11 +31,25 @@ local CLOSE_SYMBOLS = utils.set {
 }
 
 function tree_utils.opens_scope(token)
-   return OPEN_SYMBOLS[token.value] or token.is_function_start
+   return OPEN_SYMBOLS[token.value]
 end
 
 function tree_utils.closes_scope(token)
    return CLOSE_SYMBOLS[token.value]
+end
+
+local BLOCKS = utils.set {
+   "if_block",
+   "do_block",
+   "while_block",
+   "for_block",
+   "function_declaration",
+   "function_expression",
+   "repeat_block",
+}
+
+function tree_utils.is_block(node)
+   return BLOCKS[node:type()]
 end
 
 return tree_utils

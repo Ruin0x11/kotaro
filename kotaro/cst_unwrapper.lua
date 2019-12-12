@@ -3,6 +3,7 @@ local cst_unwrapper = {}
 local visitor = require("kotaro.visitor")
 local unwrapped_line = require(".kotaro.unwrapped_line")
 local utils = require("kotaro.utils")
+local tree_utils = require("kotaro.parser.tree_utils")
 
 ---
 --- Unwrap visitor
@@ -19,43 +20,12 @@ function unwrap_visitor:new()
    return setmetatable(data, { __index = unwrap_visitor })
 end
 
-local OPEN_BRACKETS = utils.set {
-   "(", "[", "{"
-}
-
-local CLOSE_BRACKETS = utils.set {
-   ")", "]", "}"
-}
-
-local function match_brackets(uwline)
-   local bracket_stack = {}
-   for _, tok in ipairs(uwline.tokens) do
-      if OPEN_BRACKETS[tok.value] then
-         bracket_stack[#bracket_stack+1] = tok
-      elseif CLOSE_BRACKETS[tok.value] then
-         assert(#bracket_stack > 0)
-         bracket_stack[#bracket_stack].matching_bracket = tok
-         tok.matching_bracket = bracket_stack[#bracket_stack]
-         bracket_stack[#bracket_stack] = nil
-      end
-
-      for _, bracket in ipairs(bracket_stack) do
-         if tok.opening_bracket == bracket then
-            bracket.container_elements = bracket.container_elements or {}
-            table.insert(bracket.container_elements, tok)
-            tok.container_opening = bracket
-         end
-      end
-   end
-end
-
 local function adjust_split_penalty(uwline)
 end
 
 function unwrap_visitor:start_new_line()
    if #self.cur_uwline.tokens > 0 then
       table.insert(self.uwlines, self.cur_uwline)
-      -- match_brackets(self.cur_uwline)
       adjust_split_penalty(self.cur_uwline)
    end
 
@@ -79,16 +49,6 @@ function unwrap_visitor:visit_node(node, visit)
       visit(self, node, visit)
    end
 end
-
-local BLOCKS = utils.set {
-   "if_block",
-   "do_block",
-   "while_block",
-   "for_block",
-   "function_declaration",
-   "function_expression",
-   "repeat_block",
-}
 
 local SIMPLE_EXPRS = utils.set {
    "expression",
@@ -116,7 +76,7 @@ local function should_indent_block(node)
             -- indent the block. It gets confusing when seeing code
             -- like "if true then if true then..."
             local ch = child:first_child()
-            if BLOCKS[ch:type()] then
+            if ch and tree_utils.is_block(ch) then
                should_indent = true
                break
             end
@@ -181,15 +141,23 @@ local function visit_block(start_kw, kws_before, kws_after, do_newline)
 end
 
 function unwrap_visitor:visit_statement_list(node, visit)
+   if #node == 1 then
+      return
+   end
+
    local i = 2
    repeat
       -- Split statement lists with semicolons.
       if node[i]:is_leaf() and node[i].value == ";" then
+         if node[i].left then
+            node[i].left.right = node[i].right
+         end
+         if node[i].right then
+            node[i].right.left = node[i].left
+         end
          node[i].left = nil
          node[i].right = nil
          table.remove(node, i)
-         node[i].left = node[i-1]
-         node[i-1].right = node[i]
       else
          if i > 2 then
             self:start_new_line()
@@ -209,6 +177,27 @@ unwrap_visitor.visit_function_expression = visit_block(nil, {"end"}, {}, false)
 unwrap_visitor.visit_repeat_block = visit_block("repeat", {"until"}, {"repeat"})
 unwrap_visitor.visit_while_block = visit_block("while", {"end"}, {"do"})
 
+function unwrap_visitor:visit_constructor_expression(node)
+   local i = 2
+   repeat
+      -- Split statement lists with semicolons.
+      if node[i]:is_leaf() and node[i].value == ";" then
+         if node[i].left then
+            node[i].left.right = node[i].right
+         end
+         if node[i].right then
+            node[i].right.left = node[i].left
+         end
+         node[i].left = nil
+         node[i].right = nil
+         table.remove(node, i)
+      else
+         visitor.visit(self, node[i])
+         i = i + 1
+      end
+   until i > #node
+end
+
 ---
 --- CST unwrapper
 ---
@@ -219,6 +208,10 @@ function cst_unwrapper.unwrap(cst)
 
    -- flush the last line
    v:start_new_line()
+
+   -- we may have modified the token stream due to semicolons, so
+   -- update next_token/prev_token fields
+   cst:changed()
 
    return v.uwlines
 end
